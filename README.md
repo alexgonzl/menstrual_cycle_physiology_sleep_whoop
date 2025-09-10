@@ -4,12 +4,10 @@ A Python package for analyzing menstrual cycle physiology and sleep data from we
 
 ## Features
 
-- **Data Processing**: Load, clean, and preprocess physiological data from wearable devices
-- **Sleep Analysis**: Analyze sleep patterns, duration, efficiency, and quality across menstrual cycle phases
-- **Cycle Analysis**: Identify cycle phases, analyze variability, and detect ovulation patterns
-- **Statistical Analysis**: Compare metrics across cycle phases with statistical testing
-- **R Integration**: Optional integration with R for advanced statistical analyses
-- **Jupyter Notebooks**: Demonstration notebooks showing package usage and research results
+- **Cycle Length Analyses**: Generation of analysis tables by user and cycle with corresponding covariates
+- **Data Processing**: Load, clean, and preprocess daily biometric data
+- **Statistical Analysis**: Core approaches used in the analyses
+- **Jupyter Notebooks**: Demonstration notebooks that generates paper figures, statistical results and a demo of the biometric GAM through the cycle.
 
 ## Installation
 
@@ -25,86 +23,18 @@ pip install -r requirements.txt
 
 # Install the package in development mode
 pip install -e .
-```
-
-### With R Integration (Optional)
-
-For advanced statistical features using R:
-
-```bash
-# Install R dependencies
-pip install rpy2
-
-# Ensure R is installed on your system with required packages
-R -e "install.packages(c('stats', 'forecast', 'TSA'))"
-```
-
-## Quick Start
-
-```python
-from menstrual_cycle_analysis import DataProcessor, SleepAnalyzer, CycleAnalyzer
-import pandas as pd
-from datetime import datetime
-
-# Load your data
-processor = DataProcessor()
-data = processor.load_data('your_sleep_data.csv')
-
-# Analyze sleep patterns
-sleep_analyzer = SleepAnalyzer()
-sleep_analyzer.load_sleep_data(data)
-sleep_metrics = sleep_analyzer.calculate_sleep_metrics()
-
-# Analyze cycle patterns
-cycle_analyzer = CycleAnalyzer()
-cycle_analyzer.load_cycle_data(data)
-
-# Define menstruation dates
-menstruation_dates = [datetime(2024, 1, 1), datetime(2024, 1, 29)]
-cycle_phases = cycle_analyzer.identify_cycle_phases(menstruation_dates)
-
-# Analyze sleep by cycle phase
-sleep_by_phase = sleep_analyzer.analyze_sleep_by_cycle_phase(cycle_phases)
-```
 
 ## Notebooks
 
 The `notebooks/` directory contains demonstration notebooks:
 
-- `01_basic_usage_example.ipynb`: Basic package usage and analysis workflows
-- `02_r_integration_example.ipynb`: Advanced statistical analysis using R integration
+- `paper_results.ipynb`: showcases code used for figure generation and statistical results as in the paper.
+- `biometric_gam_cycle.ipynb`: loads statistical model and provides widgets to evaluate the model at tidfferent levels. 
 
 To run the notebooks:
-
 ```bash
 jupyter notebook notebooks/
 ```
-
-## Package Structure
-
-```
-menstrual_cycle_analysis/
-├── __init__.py              # Main package imports
-├── data_processing.py       # Data loading and preprocessing
-├── sleep_analysis.py        # Sleep pattern analysis
-└── cycle_analysis.py        # Menstrual cycle analysis
-```
-
-## Data Format
-
-The package expects data in CSV format with the following columns:
-
-**Required columns:**
-- `date`: Date in YYYY-MM-DD format
-- `sleep_duration`: Sleep duration in hours
-- `sleep_efficiency`: Sleep efficiency percentage
-
-**Optional columns:**
-- `rem_sleep`: REM sleep duration in hours
-- `deep_sleep`: Deep sleep duration in hours
-- `heart_rate`: Average heart rate in BPM
-- `body_temperature`: Body temperature
-- Additional physiological metrics
 
 ## Contributing
 
@@ -120,5 +50,5 @@ If you use this package in your research, please cite:
 
 ```
 "The menstrual cycle through the lens of a wearable device: insights into physiology, sleep, and cycle variability"
-[Add full citation when published]
+[Full citation available when paper is published]
 ```
