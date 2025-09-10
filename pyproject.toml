@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "menstrual-cycle-analysis"
+version = "0.1.0"
+description = "A Python package for analyzing menstrual cycle physiology and sleep data from wearable devices"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Alex Gonzalez"}
+]
+keywords = ["menstrual cycle", "sleep analysis", "physiology", "wearable devices", "whoop"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "pandas>=1.5.0",
+    "numpy>=1.20.0",
+    "scipy>=1.8.0",
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
+    "jupyter>=1.0.0",
+    "notebook>=6.4.0",
+]
+
+[project.optional-dependencies]
+r-integration = [
+    "rpy2>=3.5.0",
+]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov",
+    "black",
+    "flake8",
+    "mypy",
+]
+all = [
+    "menstrual-cycle-analysis[r-integration,dev]"
+]
+
+[project.urls]
+Homepage = "https://github.com/alexgonzl/menstrual_cycle_physiology_sleep_whoop"
+Repository = "https://github.com/alexgonzl/menstrual_cycle_physiology_sleep_whoop"
+Issues = "https://github.com/alexgonzl/menstrual_cycle_physiology_sleep_whoop/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["menstrual_cycle_analysis"]
