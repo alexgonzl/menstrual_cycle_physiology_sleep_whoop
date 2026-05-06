@@ -269,6 +269,94 @@ class CycleLengthAnalyses:
                 categorical_terms=[],
                 bin_edges=self.CBM.eTRIMP_bin_edges[:-1],
             ),
+            cl_mean_sl_dur=dict(
+                data=cycle_table,
+                y_var='cycle_length',
+                plot_var='mean_cl',
+                x_var='sl_dur_mean',
+                group_var='sl_dur_mean_bin',
+                weight_var='sl_dur_mean_bin_weights',
+                bin_edges=self.CBM.SL_DUR_BIN_EDGES,
+                model_func=self._fit_gee_model,
+                model_params=dict(
+                    cov_struct=self.gee_cov_structures['exch'],
+                    family=self.gee_family['gaussian']
+                ),
+                control_terms=self.control_terms,
+                yticks=[26, 28, 30],
+                seasonal_terms=self.seasonal_terms,
+                interaction_terms=[],
+                additional_terms=[],
+                wo_terms=self.all_wo_terms,
+                sl_terms=self.all_sleep_terms,
+                categorical_terms=[],
+            ),
+            cl_p3_sl_dur=dict(
+                data=cycle_table,
+                y_var='a_delta_cl_ge_3',
+                plot_var='a_delta_cl_ge_3',
+                x_var='sl_dur_mean',
+                group_var='sl_dur_mean_bin',
+                weight_var='sl_dur_mean_bin_weights',
+                model_func=self._fit_gee_model,
+                model_params=dict(
+                    cov_struct=self.gee_cov_structures['exch'],
+                    family=self.gee_family['binomial']
+                ),
+                control_terms=self.control_terms,
+                yticks=[0.2, 0.3, 0.4, 0.5],
+                seasonal_terms=self.seasonal_terms,
+                additional_terms=['median_cl'],
+                interaction_terms=['median_cl*age'],
+                wo_terms=self.all_wo_terms,
+                sl_terms=self.all_sleep_terms,
+                categorical_terms=[],
+                bin_edges=self.CBM.SL_DUR_BIN_EDGES,
+            ),
+            cl_mean_sl_lvar=dict(
+                data=cycle_table,
+                y_var='cycle_length',
+                plot_var='mean_cl',
+                x_var='sl_dur_lvar',
+                group_var='sl_dur_lvar_bin',
+                weight_var='sl_dur_lvar_bin_weights',
+                model_func=self._fit_gee_model,
+                model_params=dict(
+                    cov_struct=self.gee_cov_structures['exch'],
+                    family=self.gee_family['gaussian']
+                ),
+                control_terms=self.control_terms,
+                yticks=[26, 28, 30],
+                seasonal_terms=self.seasonal_terms,
+                interaction_terms=[],
+                additional_terms=[],
+                wo_terms=self.all_wo_terms,
+                sl_terms=self.all_sleep_terms,
+                categorical_terms=[],
+                bin_edges=self.CBM.SL_DUR_LVAR_BINS,
+            ),
+            cl_p3_sl_lvar=dict(
+                data=cycle_table,
+                y_var='a_delta_cl_ge_3',
+                plot_var='a_delta_cl_ge_3',
+                x_var='sl_dur_lvar',
+                group_var='sl_dur_lvar_bin',
+                weight_var='sl_dur_lvar_bin_weights',
+                model_func=self._fit_gee_model,
+                model_params=dict(
+                    cov_struct=self.gee_cov_structures['exch'],
+                    family=self.gee_family['binomial']
+                ),
+                control_terms=self.control_terms,
+                yticks=[0.2, 0.3, 0.4, 0.5],
+                seasonal_terms=self.seasonal_terms,
+                additional_terms=['median_cl'],
+                interaction_terms=['median_cl*age'],
+                wo_terms=self.all_wo_terms,
+                sl_terms=self.all_sleep_terms,
+                categorical_terms=[],
+                bin_edges=self.CBM.SL_DUR_LVAR_BINS,
+            ),
         )
         self.model_params = mp
 
@@ -434,7 +522,132 @@ class CycleLengthAnalyses:
         print(sph.get_conditional_predictions(eval_term='age', eval_vals=[24, 32, 33, 44]).round(2))
         print(sph.calculate_min_term_ci(term='age').round(2))
 
-    # =================== F2/S3 (cl_x_behav) ===================
+    # =================== F2 ===================
+    def cl_x_sleep_plots(self, model_CI='conditional', save_fig=True):
+        """Generate cycle length and deviation vs sleep duration / variability (Figure 2).
+
+        2x2 layout: rows are [mean cycle length, deviation proportion]; columns are
+        [sleep duration, sleep duration variability].
+        """
+        panel_a = 'cl_mean_sl_dur'
+        panel_b = 'cl_p3_sl_dur'
+        panel_c = 'cl_mean_sl_lvar'
+        panel_d = 'cl_p3_sl_lvar'
+
+        with plt.rc_context(rc=self.plotting_params):
+            f, axs = plt.subplots(2, 2, dpi=self.DPI,
+                                  figsize=(self._age_axis_width * 2 + self._w_spacing,
+                                           self._CL_axis_height * 2 + self._h_spacing),
+                                  constrained_layout=False)
+
+            labelpad = 2
+
+            # First panel
+            ax = axs[0, 0]
+            self._cl_behav_panels(panel=panel_a, ax=ax, plot_model=True, model_CI=model_CI)
+            ax.set_xlabel('')
+            ax.set_xticklabels('')
+            ax.set_ylabel("Cycle Length \n[days]", labelpad=labelpad)
+            ax.grid(axis='x', lw=0)
+
+            # Second panel
+            ax = axs[1, 0]
+            self._cl_behav_panels(panel=panel_b, ax=ax, plot_model=True, add_counts=False, model_CI=model_CI)
+            ax.grid(axis='x', lw=0)
+            ax.set_ylabel("Cycle Length Deviation \n[proportion ≥ 3 days]", labelpad=labelpad)
+            ax.set_xlabel("Mean Sleep Duration [hours]")
+
+            # Third panel
+            ax = axs[0, 1]
+            self._cl_behav_panels(panel=panel_c, ax=ax, plot_model=True, model_CI=model_CI)
+            ax.set_xlabel('')
+            ax.set_xticklabels('')
+            ax.set_ylabel("")
+            ax.grid(axis='x', lw=0)
+
+            # Fourth panel
+            ax = axs[1, 1]
+            self._cl_behav_panels(panel=panel_d, ax=ax, plot_model=True, add_counts=False, model_CI=model_CI)
+            ax.set_ylabel("")
+            ax.grid(axis='x', lw=0)
+
+            self._row_figure_labels(f, [axs[0, 0], axs[1, 0]], x_pos=0.05, nrows=2)
+
+            if save_fig:
+                self.save_fig(f, "fig2_cycle_length_x_sleep", extension='svg')
+                self.save_fig(f, "fig2_cycle_length_x_sleep", extension='png')
+        return f, ax
+
+    def cl_x_behav_stats(self, panel='cl_mean_sl_dur', get_min=False,
+                         calculate_within_subject_contrast=False, compute_raw_contrast=False):
+        """Calculate statistics for cycle length vs behavior relationships."""
+
+        model_name = panel
+        mp = self.model_params[model_name]
+        y_var = mp['y_var']
+        bin_var = mp['group_var']
+        subject_level_var = mp['plot_var']
+        eval_term = mp['x_var']
+        data = mp['data']
+
+        print()
+        print("------------")
+        print(f"Mean {subject_level_var}")
+        print(f"{self.CBM.tables['user'][subject_level_var].mean(): 0.2f}")
+
+        if eval_term == 'sl_dur_mean':
+            eval_vals = [8, 6]
+        elif eval_term == 'sl_dur_lvar':
+            eval_vals = [-2, 2]
+            buffer = 1
+            bins = [eval_vals[0] - buffer,
+                    eval_vals[0] + buffer,
+                    eval_vals[1] - buffer,
+                    eval_vals[1] + buffer]
+            labels = [eval_vals[0], '', eval_vals[1]]
+            data['sl_dur_lvar_bin2'] = pd.cut(data['sl_dur_lvar'], bins=bins, include_lowest=True, labels=labels)
+            bin_var = 'sl_dur_lvar_bin2'
+        else:
+            raise ValueError(f"Unsupported eval_term: {eval_term}")
+
+        m = self.get_model(model_name)
+
+        sph = StatisticalPredictionHandler(m, data)
+        print(sph.get_conditional_predictions(eval_term=eval_term, eval_vals=eval_vals).round(2))
+        print('contrast')
+        r = sph.calculate_conditional_contrast(term_of_interest=eval_term, values_to_compare=eval_vals)
+
+        or_present = 'odds_ratio' in r.columns
+        columns = ['mean1', 'mean2', 'contrast', 'contrast_ci_lower', 'contrast_ci_upper']
+        if or_present:
+            columns += ['odds_ratio', 'ci_l_or', 'ci_u_or']
+        print(r.round(2)[columns].T)
+
+        if get_min:
+            print()
+            print("------------")
+            print("X value for minima")
+            print(sph.calculate_min_term_ci(term=eval_term, alpha=0.05, method='delta').round(2))
+
+        if calculate_within_subject_contrast:
+            weights_var = mp.get('weight_var', None)
+            method = 'model'
+            print()
+            print("------------")
+            print("Within-subject contrast stats")
+            r = sph.calculate_within_subject_contrast(term_of_interest=eval_term,
+                                                     values_to_compare=eval_vals,
+                                                     bin_var=bin_var,
+                                                     weights_var=weights_var,
+                                                     method=method)
+
+            columns = ['mean1', 'mean2', 'contrast', 'contrast_ci_lower', 'contrast_ci_upper', 'n_individuals', 'n_observations']
+            or_present = 'odds_ratio' in r.columns
+            if or_present:
+                columns += ['odds_ratio', 'ci_l_or', 'ci_u_or']
+            print(r.round(2)[columns].T)
+
+    # =================== S3/S2 (cl_x_behav, cl_x_bmi) ===================
     def cl_x_behav_plots(self, behavior='sl', panel_labels=("a.", "b."), safe_fig=False):
         """
         Generate cycle length vs behavior plots.
@@ -687,6 +900,53 @@ class CycleLengthAnalyses:
 
             if save_fig:
                 self.save_fig(f, "figS1_cycle_length_age_distribution", extension='png')
+
+    # =================== S5 (behav_x_age_bmi) ===================
+    def behav_x_age_bmi_plots(self, save_fig=True):
+        """Generate behavioral plots for age and BMI (Figure S5)."""
+        panels = [
+            ('sl_dur_age', 'age', "Sleep Duration \n[hours]"),
+            ('sl_dur_bmi', 'BMI', ""),
+            ('eTRIMP_age', 'age', "eTRIMP \n[intensity x mins]"),
+            ('eTRIMP_bmi', 'BMI', "")
+        ]
+
+        with plt.rc_context(rc=self.plotting_params):
+            f, axs = plt.subplots(2, 2, dpi=self.DPI,
+                                  figsize=(self._age_axis_width * 2 + self._w_spacing,
+                                           self._CL_axis_height * 2 + self._h_spacing),
+                                  constrained_layout=False)
+
+            for idx, (panel_name, x_type, ylabel) in enumerate(panels):
+                row, col = divmod(idx, 2)
+                panel_params = self.model_params[panel_name]
+                data = panel_params['data']
+                y_var = panel_params['y_var']
+                yticks = panel_params['yticks']
+
+                if x_type == 'age':
+                    self.CBM.plot_var_x_age(y_var=y_var, data=data, ax=axs[row, col], ms=5, lw=2,
+                                            yticks=yticks, add_counts=(row == 0), join_points=False)
+                else:
+                    self.CBM.plot_var_x_BMI(y_var=y_var, data=data, ax=axs[row, col], ms=5, lw=2,
+                                            yticks=yticks, add_counts=(row == 0), join_points=False)
+                    axs[row, col].set_ylabel('')
+                    axs[row, col].set_yticklabels([])
+
+                if ylabel:
+                    axs[row, col].set_ylabel(ylabel)
+
+                if row == 0:
+                    axs[row, col].set_xlabel('')
+                    axs[row, col].set_xticklabels('')
+
+                axs[row, col].grid(axis='x', lw=0)
+
+            self._row_figure_labels(f, [axs[0, 0], axs[1, 0]], x_pos=0.035, nrows=2)
+
+            if save_fig:
+                self.save_fig(f, "figS5_behaviors_x_age_bmi", extension='png')
+                self.save_fig(f, "figS5_behaviors_x_age_bmi", extension='svg')
 
     # ----------- Auxiliary Functions --------------##
     def get_conditional_preds_CI(self, data, fitted_model, eval_term, eval_vals, alpha=0.05):

@@ -1,15 +1,14 @@
 """`StatisticalPredictionHandler` — verbatim port of the slice used by
-notebook 01 (`get_conditional_predictions`, `calculate_conditional_contrast`,
-`calculate_min_term_ci` + their helpers).
+notebooks 01–02 (`get_conditional_predictions`, `calculate_conditional_contrast`,
+`calculate_within_subject_contrast`, `calculate_min_term_ci` + their helpers).
 
 Source: `whoop_analyses/whoop_analyses/statistical_prediction_methods.py`
 (StatisticalPredictionHandler).
 
-Methods unused by notebook 01 (marginal predictions / contrasts, raw / subject-
-averaged / within-subject contrasts, interaction contrasts, simple-interaction
-effects, bootstrap odds-ratio variants, etc.) are intentionally not included;
-they will be ported when the notebooks that need them are added. Method bodies
-that are kept are byte-identical to the source.
+Methods unused by these notebooks (marginal predictions / contrasts, raw /
+subject-averaged contrasts, interaction contrasts, simple-interaction effects)
+are intentionally not included; they will be ported when later notebooks need
+them. Method bodies that are kept are byte-identical to the source.
 """
 from __future__ import annotations
 
@@ -495,3 +494,210 @@ class StatisticalPredictionHandler:
         ci_upper = min_x + z * std_error
 
         return ci_lower, ci_upper
+
+    # =========================================================================
+    # WITHIN-SUBJECT CONTRASTS
+    # =========================================================================
+
+    def _find_individuals_with_both_values(self, bin_var: str, values_to_compare: List[float],
+                                           individual_id_var: str, data=None) -> List[Any]:
+        """Find individuals with observations in both bins of the binned variable."""
+        value1, value2 = values_to_compare
+        if data is None:
+            data = self.data
+        individuals_value1 = set(data[data[bin_var] == value1][individual_id_var])
+        individuals_value2 = set(data[data[bin_var] == value2][individual_id_var])
+        return list(individuals_value1.intersection(individuals_value2))
+
+    def _fit_within_subject_model(self, data: pd.DataFrame, individual_id_var: str, weights_var: str):
+        """Fit a GEE model for within-subject analysis, incorporating weights."""
+        import statsmodels.api as sm
+        import statsmodels.formula.api as smf
+
+        formula = self.model_params['formula']
+        family = self.model_params.get('family', sm.families.Gaussian())
+
+        weights = data[weights_var] if weights_var in data.columns else None
+
+        model = smf.gee(
+            formula=formula,
+            groups=data[individual_id_var],
+            data=data,
+            family=family,
+            cov_struct=sm.cov_struct.Exchangeable(),
+            weights=weights
+        ).fit(maxiter=100)
+
+        return model
+
+    def _preprocess_data(self, data: pd.DataFrame, term_of_interest: str, bin_var: str,
+                         individual_id_var: str, weights_var: str) -> pd.DataFrame:
+        required_columns = [term_of_interest, bin_var, individual_id_var, weights_var]
+        data = self._validate_data(data, required_columns=required_columns)
+        return data
+
+    def _validate_data(self, data: pd.DataFrame, required_columns: List[str]) -> pd.DataFrame:
+        data = data.dropna(subset=required_columns)
+        for col in required_columns:
+            if col in data.columns:
+                data = data[~data[col].isin([np.inf, -np.inf])]
+        return data
+
+    def calculate_within_subject_contrast(self, term_of_interest: str, values_to_compare: List[float],
+                                          bin_var: str, individual_id_var: str = 'n_id',
+                                          weights_var: str = 'weights', method: str = 'model',
+                                          bootstrap_samples: int = 500, alpha: float = 0.05) -> pd.DataFrame:
+        value1, value2 = values_to_compare
+
+        # Step 1: Filter individuals with observations in both bins
+        individuals_with_both = self._find_individuals_with_both_values(bin_var, values_to_compare, individual_id_var)
+        if len(individuals_with_both) == 0:
+            raise ValueError("No individuals found with observations in both bins.")
+
+        within_subject_data = self.data[self.data[individual_id_var].isin(individuals_with_both)].copy()
+
+        # Step 2: Recompute weights based on the filtered data
+        within_subject_data[weights_var] = within_subject_data.groupby(bin_var)[bin_var].transform(
+            lambda x: 1 / np.log(len(x)) if len(x) > 0 else 0)
+
+        # Step 3: Drop rows with missing values in relevant columns
+        required_columns = list(set([term_of_interest, bin_var, individual_id_var, weights_var] + list(self._get_model_variables())))
+        within_subject_data = within_subject_data.dropna(subset=required_columns)
+
+        # Step 4: Perform analysis based on the selected method
+        if method == 'model':
+            model = self._fit_within_subject_model(within_subject_data, individual_id_var, weights_var)
+            contrast_results = self._calculate_model_based_contrast(model, term_of_interest, values_to_compare, alpha)
+        elif method == 'bootstrap':
+            contrast_results = self._bootstrap_within_subjects_marginal_odds_ratio(
+                term_of_interest=term_of_interest,
+                values_to_compare=values_to_compare,
+                bin_var=bin_var,
+                individual_id_var=individual_id_var,
+                weights_var=weights_var,
+                n_bootstrap=bootstrap_samples,
+                alpha=alpha
+            )
+            contrast_results = pd.DataFrame([contrast_results])
+        else:
+            raise ValueError(f"Unknown method: {method}. Use 'model' or 'bootstrap'.")
+
+        # Step 5: Add metadata and return results
+        contrast_results['method'] = method
+        contrast_results['n_individuals'] = len(individuals_with_both)
+        contrast_results['n_observations'] = len(within_subject_data)
+        obs_per_value = within_subject_data.groupby(bin_var).size().to_dict()
+        for val in values_to_compare:
+            contrast_results[f'n_obs_{val}'] = obs_per_value.get(val, 0)
+
+        return contrast_results
+
+    def _calculate_model_based_contrast(self, model, term_of_interest: str, values_to_compare: List[float],
+                                        alpha: float = 0.05) -> pd.DataFrame:
+        """Calculate contrasts using a fitted within-subject model."""
+        value1, value2 = values_to_compare
+
+        base_frame = self._create_base_frame()
+        pred_data = pd.concat([base_frame, base_frame], ignore_index=True)
+        pred_data[term_of_interest] = values_to_compare
+        pred_data = self._update_derived_terms(pred_data, term_of_interest)
+
+        pred_results = model.get_prediction(pred_data).summary_frame(alpha=alpha)
+        pred1, pred2 = pred_results.iloc[0]['mean'], pred_results.iloc[1]['mean']
+        se1, se2 = pred_results.iloc[0]['mean_se'], pred_results.iloc[1]['mean_se']
+
+        contrast = pred2 - pred1
+        contrast_se = np.sqrt(se1**2 + se2**2)
+        z_critical = stats.norm.ppf(1 - alpha / 2)
+
+        results = {
+            'term': term_of_interest,
+            'value1': value1,
+            'value2': value2,
+            'mean1': pred1,
+            'mean2': pred2,
+            'contrast': contrast,
+            'contrast_se': contrast_se,
+            'contrast_ci_lower': contrast - z_critical * contrast_se,
+            'contrast_ci_upper': contrast + z_critical * contrast_se,
+        }
+
+        if self.is_logistic:
+            or_results = self._calculate_odds_ratio_and_ci(pred1, pred2, se1, se2, alpha)
+            results.update(or_results)
+
+        return pd.DataFrame(results, index=[0])
+
+    def _bootstrap_within_subjects_marginal_odds_ratio(self, term_of_interest: str, values_to_compare,
+                                                       bin_var: str, individual_id_var: str, weights_var: str,
+                                                       n_bootstrap: int = 1000, alpha: float = 0.05) -> Dict[str, float]:
+        """Bootstrap the odds ratio and confidence intervals by resampling by subject."""
+        bootstrap_or = []
+        value1, value2 = values_to_compare
+        epsilon = 1e-6
+
+        individuals_with_both = self._find_individuals_with_both_values(bin_var, values_to_compare, individual_id_var)
+        if len(individuals_with_both) == 0:
+            raise ValueError("No individuals found with observations in both bins.")
+
+        within_subject_data = self.data[self.data[individual_id_var].isin(individuals_with_both)].copy()
+
+        within_subject_data[weights_var] = within_subject_data.groupby(bin_var)[bin_var].transform(
+            lambda x: 1 / np.log(len(x)) if len(x) > 0 else 0)
+
+        required_columns = list(set([term_of_interest, bin_var, individual_id_var, weights_var] + list(self._get_model_variables())))
+        within_subject_data = within_subject_data.dropna(subset=required_columns)
+
+        grouped_data = within_subject_data.groupby(individual_id_var)
+
+        for i in range(n_bootstrap):
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+
+                    resampled_subjects = np.random.choice(list(grouped_data.groups.keys()), size=len(grouped_data), replace=True)
+                    boot_data = pd.concat([grouped_data.get_group(subject) for subject in resampled_subjects])
+                    boot_data = self._preprocess_data(boot_data, term_of_interest, bin_var, individual_id_var, weights_var)
+
+                    individuals_with_both = self._find_individuals_with_both_values(bin_var, values_to_compare, individual_id_var, data=boot_data)
+                    if len(individuals_with_both) == 0:
+                        print(f"Skipping bootstrap iteration {i} due to insufficient data.")
+                        continue
+                    boot_data = boot_data[boot_data[individual_id_var].isin(individuals_with_both)]
+
+                    boot_data[weights_var] = boot_data.groupby(bin_var)[bin_var].transform(
+                        lambda x: 1 / np.log(len(x)) if len(x) > 0 else 0
+                    )
+
+                    model = self._fit_within_subject_model(boot_data, individual_id_var, weights_var)
+
+                    pred_data1 = boot_data.copy(deep=True)
+                    pred_data1[term_of_interest] = value1
+                    pred_data1 = self._update_derived_terms(pred_data1, term_of_interest)
+                    pred_data2 = boot_data.copy(deep=True)
+                    pred_data2[term_of_interest] = value2
+                    pred_data2 = self._update_derived_terms(pred_data2, term_of_interest)
+
+                    pred1 = model.predict(pred_data1.iloc[0:1]).iloc[0]
+                    pred2 = model.predict(pred_data2.iloc[1:2]).iloc[0]
+
+                    pred1 = np.clip(pred1, epsilon, 1 - epsilon)
+                    pred2 = np.clip(pred2, epsilon, 1 - epsilon)
+
+                    odds1, odds2 = pred1 / (1 - pred1), pred2 / (1 - pred2)
+                    bootstrap_or.append(odds2 / odds1)
+
+            except Exception as e:
+                print(f"Bootstrap iteration {i} failed: {e}")
+                continue
+
+        bootstrap_or = pd.Series(bootstrap_or).dropna()
+
+        ci_lower = np.percentile(bootstrap_or, alpha / 2 * 100)
+        ci_upper = np.percentile(bootstrap_or, (1 - alpha / 2) * 100)
+
+        return {
+            'odds_ratio': np.mean(bootstrap_or),
+            'ci_l_or': ci_lower,
+            'ci_u_or': ci_upper
+        }
