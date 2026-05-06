@@ -1,12 +1,18 @@
-# Core dependencies
-pandas>=1.5.0
-numpy>=1.20.0
-scipy>=1.8.0
-matplotlib>=3.5.0
-seaborn>=0.11.0
-jupyter>=1.0.0
-notebook>=6.4.0
+# Core scientific stack
+pandas>=2.0
+numpy>=1.24
+scipy>=1.10
+statsmodels>=0.14
+matplotlib>=3.7
+seaborn>=0.12
+pyarrow>=14
 
-# Optional R integration
-# Uncomment the line below if you want R integration features
-# rpy2>=3.5.0
+# Notebook runtime
+jupyterlab>=4
+ipykernel
+ipywidgets
+
+# R / rpy2 — required only for notebook 03 (biometric GAMs via mgcv).
+# Recommended install path is `conda env create -f environment.yml` because
+# rpy2 is fragile when installed via pip alone (needs a matching R 4.x ABI).
+# rpy2>=3.5,<4

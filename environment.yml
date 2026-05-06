@@ -1,0 +1,31 @@
+name: menstrual_cycle
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+
+  # Core scientific stack
+  - pandas>=2.0
+  - numpy>=1.24
+  - scipy>=1.10
+  - statsmodels>=0.14
+  - matplotlib>=3.7
+  - seaborn>=0.12
+  - pyarrow>=14
+
+  # Notebook runtime
+  - jupyterlab>=4
+  - ipykernel
+  - ipywidgets
+
+  # R + rpy2 — required only for notebook 03 (biometric GAMs via mgcv).
+  # Comment out these three lines if you only need notebooks 01/02/04/05.
+  - r-base>=4.3
+  - r-mgcv
+  - rpy2>=3.5
+
+  # Editable install of this package
+  - pip
+  - pip:
+      - -e .

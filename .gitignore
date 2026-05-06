@@ -1,3 +1,15 @@
+# Project-specific: private data, cached models, intermediate parquet caches.
+# `figures/` is INTENTIONALLY NOT gitignored — generated figures are committed
+# to the repo so readers can browse them on GitHub without running notebooks.
+data/
+models/
+!data/.gitkeep
+!models/.gitkeep
+
+# macOS junk
+.DS_Store
+**/.DS_Store
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
