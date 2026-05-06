@@ -6,6 +6,9 @@ models/
 !data/.gitkeep
 !models/.gitkeep
 
+# CLAUDE.md references private sibling repo paths; not for the public release.
+CLAUDE.md
+
 # macOS junk
 .DS_Store
 **/.DS_Store
