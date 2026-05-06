@@ -1,15 +1,11 @@
 """Public data-loading entry point.
 
-`load_paper_data()` returns the three DataFrames every figure-family notebook
-starts from:
-
-  - `day_df`   one row per (n_id, date); the per-day biometric/sleep/workout time-series
-  - `cycle_df` one row per (n_id, cycle_num); GEE-ready cycle-level table
-  - `user_df`  one row per n_id; demographics, cycle counts, valid-user flag
-
-On first call we parse the two CSVs (~30s for the 1.4M-row daily file), augment
-with day-level workout columns, build the cycle and user tables, and cache
-parquet copies under `data/cache/`. Subsequent calls read from cache.
+`load_paper_data()` reads the two private CSVs, instantiates `CycleBehavMethods`
+(which runs the full preprocessing pipeline in its constructor — derives
+j_cycle columns, drops unbounded cycles, builds user and cycle tables), and
+returns `(day_df, CBM)`. Notebooks then call `CBM.add_sleep_behaviors(...)`,
+`CBM.add_workout_behaviors(...)` and instantiate
+`CycleLengthAnalyses(CBM=CBM)` for plotting.
 """
 from __future__ import annotations
 
@@ -18,80 +14,29 @@ from pathlib import Path
 import pandas as pd
 
 from . import config
-from .behaviors import (
-    add_workout_day_columns,
-    aggregate_sleep_per_cycle,
-    aggregate_workouts_per_cycle,
-)
-from .cycles import build_cycle_table, build_user_table
-
-
-_DAY_PARQUET = "day.parquet"
-_CYCLE_PARQUET = "cycle.parquet"
-_USER_PARQUET = "user.parquet"
+from .cl_behav_methods import CycleBehavMethods
 
 
 def load_paper_data(
     *,
     data_dir: Path | str | None = None,
-    use_cache: bool = True,
-    rebuild: bool = False,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Returns `(day_df, cycle_df, user_df)`.
+) -> tuple[pd.DataFrame, CycleBehavMethods]:
+    """Returns `(day_df, CBM)`.
 
-    Parameters
-    ----------
-    data_dir : path, optional
-        Override the default `data/` directory.
-    use_cache : bool, default True
-        If True, read from parquet caches under `data_dir/cache/` when present.
-    rebuild : bool, default False
-        Force a rebuild even if caches exist (re-parses CSVs and re-aggregates).
+    `day_df` is the raw daily CSV (1.4M rows). `CBM` is an initialised
+    `CycleBehavMethods` instance whose `tables['user']` and `tables['cycle']`
+    are populated; the cycle aggregation steps (sleep, workouts) are
+    invoked by the caller per the source notebook flow:
+
+        CBM.add_sleep_behaviors('user')
+        CBM.add_sleep_behaviors('cycle')
+        CBM.add_workout_behaviors('user')
+        CBM.add_workout_behaviors('cycle')
     """
     data_dir = Path(data_dir) if data_dir is not None else config.DATA_DIR
-    cache_dir = data_dir / "cache"
-
-    if use_cache and not rebuild and _all_caches_present(cache_dir):
-        day_df = pd.read_parquet(cache_dir / _DAY_PARQUET)
-        cycle_df = pd.read_parquet(cache_dir / _CYCLE_PARQUET)
-        user_df = pd.read_parquet(cache_dir / _USER_PARQUET)
-        return day_df, cycle_df, user_df
-
     day_df, summary_df = _load_csvs(data_dir)
-    day_df = add_workout_day_columns(day_df)
-
-    user_df = build_user_table(day_df, summary_df)
-    cycle_df = build_cycle_table(day_df, user_df)
-    cycle_df = aggregate_sleep_per_cycle(day_df, cycle_df)
-    cycle_df = aggregate_workouts_per_cycle(day_df, cycle_df)
-
-    if use_cache:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        _to_parquet_safe(day_df, cache_dir / _DAY_PARQUET)
-        _to_parquet_safe(cycle_df.reset_index(), cache_dir / _CYCLE_PARQUET)
-        _to_parquet_safe(user_df.reset_index(), cache_dir / _USER_PARQUET)
-
-    return day_df, cycle_df, user_df
-
-
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
-def _all_caches_present(cache_dir: Path) -> bool:
-    return all((cache_dir / f).exists() for f in (_DAY_PARQUET, _CYCLE_PARQUET, _USER_PARQUET))
-
-
-def _to_parquet_safe(df: pd.DataFrame, path: Path) -> None:
-    """`pd.cut` produces dictionary-encoded Interval columns that pyarrow can't
-    write to parquet. Cast those to plain string before persisting; the
-    categorical structure can be rebuilt downstream from `config` if needed.
-    """
-    out = df.copy()
-    for col in out.columns:
-        s = out[col]
-        if pd.api.types.is_categorical_dtype(s) and pd.api.types.is_interval_dtype(s.cat.categories):
-            out[col] = s.astype(str)
-    out.to_parquet(path)
+    CBM = CycleBehavMethods(day_df, summary_df)
+    return day_df, CBM
 
 
 def _load_csvs(data_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:

@@ -179,7 +179,7 @@ class PLOTTING_ROUTINES:
                 )
 
         if add_counts:
-            _add_counts_to_point_plot(gdata, ax, dx, dy_factor)
+            self._add_counts_to_point_plot(gdata, ax, dx, dy_factor)
         ax.set_xticks(range(n_x))
         ax.set_xticklabels(gdata.index.values)
         return ax
