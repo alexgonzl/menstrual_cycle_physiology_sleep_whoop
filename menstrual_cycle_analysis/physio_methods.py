@@ -18,8 +18,10 @@ will be ported when notebook 03 is implemented.
 """
 from __future__ import annotations
 
+import itertools
 import warnings
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -28,7 +30,12 @@ from scipy import signal
 from tqdm import tqdm
 
 from . import config
-from ._plot_utils import setup_axes
+from ._plot_utils import (
+    add_legend,
+    draw_rectangle_gradient,
+    fixed_yticks,
+    setup_axes,
+)
 from .cl_behav_methods import CycleBehavMethods
 from .stats.circular import circmean_day, circvar_day
 
@@ -65,6 +72,13 @@ class PhysioMethods(CycleBehavMethods):
         self.filter_data = self._filters['biometric']
 
         self.delta_cl_palette = sns.diverging_palette(250, 30, l=60, s=90, center="dark", n=7)
+
+        self.locking_params = dict(follicular=dict(d_range=np.arange(-15, 35),
+                                                    delta_cl_col='delta_cl_binned_f',
+                                                    xticks=np.arange(-10, 31, 10)),
+                                   luteal=dict(d_range=np.arange(-30, 16),
+                                               delta_cl_col='delta_cl_binned_b',
+                                               xticks=np.arange(-30, 11, 10)))
 
         self.centering_col = self._c_col
         self._user_x_cycle_bounds = None
@@ -805,6 +819,578 @@ class PhysioMethods(CycleBehavMethods):
             print(f"Model for {y_var} fitted successfully.")
             print(f"Model metrics for {y_var}: D2={d2:0.2f}, edf={edf:0.2f}")
             print("\n--------------------------------------------------\n")
+
+    def get_gam_predictions(self, data, se_fit=False, biometrics=None):
+        """ Generates predictions from fitted GAM models for core biometrics.
+        data: DataFrame with columns: 'cl', 'age', and 'd'.
+        se_fit: If True, returns standard errors and confidence intervals.
+        Returns a DataFrame with predictions for each core biometric.
+        The DataFrame will have columns named like 'pct_HRV_pred', 'pct_HRV_se', 'pct_HRV_lower', 'pct_HRV_upper' if se_fit is True.
+        """
+        if self.gam_models is None:
+            print("Run fit_gam_models first")
+            return
+
+        if se_fit:
+            pred_cols = ['pred', 'se', 'lower', 'upper']
+        else:
+            pred_cols = ['pred']
+
+        if biometrics is None:
+            biometrics = self.gam_models.keys()
+        elif isinstance(biometrics, str):
+            biometrics = [biometrics]
+
+        for y_var in biometrics:
+            print(y_var)
+            model = self.gam_models[y_var]
+            pred_df = self.predict_bam_chunked_ci(model, data, unconditional=True, se_fit=se_fit)
+
+            _pred_cols = [f"{y_var}_{col}" for col in pred_cols]
+            if se_fit:
+                data[_pred_cols] = pred_df[['predictions', 'se', 'lower', 'upper']].values
+            else:
+                data[_pred_cols] = pred_df['predictions'].values.reshape(-1, 1)
+
+        return data
+
+    def get_gam_cl_age_sim_data(self, ages=None, cycle_lengths=None, fixed_vals_dict=None):
+        """ Generates simulated data for GAM models based on cycle lengths and ages.
+        This function creates a DataFrame with cycle lengths and ages, and optionally fills in fixed values
+        for specific columns. It then uses the GAM models to generate predictions for these combinations.
+        The resulting DataFrame contains the cycle lengths, ages, and the predicted values for each core biometric.
+        If fixed values are provided, they will be added to the DataFrame before predictions.
+        """
+        if ages is None:
+            ages = self.gam_ages
+        if cycle_lengths is None:
+            cycle_lengths = self.gam_CLs
+        sim_data = self._gen_gam_sim_data(ages=ages, cycle_lengths=cycle_lengths, fixed_vals_dict=fixed_vals_dict)
+        sim_data = self.get_gam_predictions(sim_data, se_fit=False)
+
+        self.gam_sim_data_results = sim_data
+        return sim_data
+
+    def get_gam_sim_data_for_vars(self, var_grid_dict, fixed_vals_dict=None, se_fit=False, biometrics=None):
+        """
+        Generates simulated data for GAM models for any combination of variables.
+
+        Parameters
+        ----------
+        var_grid_dict : dict
+            Dictionary where keys are variable names (e.g., 'age', 'cl', 'd') and values are arrays/lists of values to simulate.
+            Example: {'age': np.arange(18, 51), 'cl': np.arange(21, 36), 'd': np.arange(-10, 36)}
+        fixed_vals_dict : dict, optional
+            Dictionary of fixed values for other variables (e.g., {'sleep_dur': 7.5}).
+        se_fit : bool, optional
+            If True, returns standard errors and confidence intervals.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with all combinations of variables and predictions for each core biometric.
+        """
+
+        # Ensure 'd' (day) is always present and default to -10 to 35 if not provided
+        var_grid_dict = dict(var_grid_dict)  # make a copy to avoid mutating input
+        if 'd' not in var_grid_dict:
+            var_grid_dict['d'] = np.arange(-10, 36)
+
+        keys = list(var_grid_dict.keys())
+        values = [np.asarray(var_grid_dict[k]) for k in keys]
+        combos = list(itertools.product(*values))
+        sim_data = pd.DataFrame(combos, columns=keys)
+        #return sim_data
+
+        # Add fixed values if provided
+        if fixed_vals_dict is not None:
+            for k, v in fixed_vals_dict.items():
+                sim_data[k] = v
+        # Fill in any missing columns required by the model with their mean if available
+        if hasattr(self, "gam_data"):
+            for col in getattr(self, "gam_additional_covariates", []):
+                if col not in sim_data.columns:
+                    sim_data[col] = self.gam_data[col].mean()
+
+        # filter out invalid days outside of cycle
+        sim_data = sim_data[sim_data['d'] <= sim_data['cl']]
+
+        #return sim_data
+        sim_data = self.get_gam_predictions(sim_data, se_fit=se_fit, biometrics=biometrics)
+        #self.gam_sim_data_results = sim_data
+        return sim_data
+
+    def _gen_gam_sim_data(self, ages=None, cycle_lengths=None, day_step=0.5, fixed_vals_dict=None):
+
+        if ages is None:
+            ages = np.arange(20, 50, 0.25)
+        elif not hasattr(ages, '__iter__'):
+            ages = [ages]
+
+        if cycle_lengths is None:
+            cycle_lengths = np.arange(self.MIN_MEDIAN_CL, self.MAX_MEDIAN_CL, 0.25)
+        elif not hasattr(cycle_lengths, '_'):
+            cycle_lengths = [cycle_lengths]
+
+        cycle_days = np.arange(-10, self.MAX_MEDIAN_CL, day_step)
+
+        # Create a meshprocess_physio_datagrid of all combinations
+        cd, cl, a = np.meshgrid(cycle_days, cycle_lengths, ages, indexing='ij')
+
+        # Flatten the arrays and create a DataFrame
+        sim_data = pd.DataFrame({
+            'd': cd.ravel(),
+            'cl': cl.ravel(),
+            'age': a.ravel()
+        })
+
+        for kk in self.gam_additional_covariates:
+            sim_data[kk] = self.gam_data[kk].mean()
+
+        if fixed_vals_dict is not None:
+            for key, value in fixed_vals_dict.items():
+                sim_data[key] = value
+
+        # throw out cycle days > cycle length
+        sim_data = sim_data[sim_data.d < sim_data.cl].reset_index(drop=True)
+        return sim_data
+
+    def compute_gam_range_contrast_r(self, biometric,
+                                     range_conditions, search_ranges=None,
+                                     fixed_covariates=None):
+        """
+        Compute contrast between physiological ranges across different conditions,
+        including SE and CI for min and max contrasts.
+        """
+
+        gam_model = self.gam_models[biometric]
+
+        import rpy2.robjects as ro
+        from rpy2.robjects import default_converter, pandas2ri
+        from rpy2.robjects.conversion import localconverter
+
+        if search_ranges is None:
+            search_ranges = {
+                'min_days': list(range(0, 30)),
+                'max_days': list(range(0, 30))
+            }
+
+        # Fill in any missing columns required by the model with their mean if available
+        if fixed_covariates is None:
+            fixed_covariates = {}
+
+        for col in getattr(self, "gam_additional_covariates", []):
+            if col not in fixed_covariates.keys():
+                fixed_covariates[col] = self.gam_data[col].mean()
+
+        if 'age' in range_conditions[0] or 'age' in range_conditions[1]:
+            ages = [cond.get('age') for cond in range_conditions]
+            cycle_lengths = [fixed_covariates.get('cl', 28)]
+
+        elif 'cl' in range_conditions[0] or 'cl' in range_conditions[1]:
+            cycle_lengths = [cond.get('cl') for cond in range_conditions]
+            ages = [fixed_covariates.get('age', 32)]
+        else:
+            raise ValueError("Must vary either 'age' or 'cl' in range_conditions")
+
+        all_days = list(set(search_ranges['min_days'] + search_ranges['max_days']))
+        pred_data = self.get_gam_sim_data_for_vars(var_grid_dict={'d': all_days,
+            'age': ages, 'cl': cycle_lengths}, fixed_vals_dict=fixed_covariates, biometrics=biometric)
+
+        pred_data['condition_id'] = 0
+        if len(ages) > 1:
+            pred_data.loc[pred_data['age'] == ages[1], 'condition_id'] = 1
+        elif len(cycle_lengths) > 1:
+            pred_data.loc[pred_data['cl'] == cycle_lengths[1], 'condition_id'] = 1
+        with localconverter(default_converter + pandas2ri.converter):
+            r_pred_data = pandas2ri.py2rpy(pred_data)
+        ro.r.assign('pred_data', r_pred_data)
+        ro.r.assign('gam_model', gam_model)
+        ro.r.assign('min_days', ro.IntVector(search_ranges['min_days']))
+        ro.r.assign('max_days', ro.IntVector(search_ranges['max_days']))
+        ro.r.assign('n_conditions', len(range_conditions))
+        r_code = """
+        library(mgcv)
+        preds <- predict(gam_model, newdata=pred_data, se.fit=TRUE)
+        pred_data$pred <- preds$fit
+        X <- predict(gam_model, newdata=pred_data, type="lpmatrix")
+        ranges <- numeric(n_conditions)
+        min_rows <- numeric(n_conditions)
+        max_rows <- numeric(n_conditions)
+        min_days_found <- numeric(n_conditions)
+        max_days_found <- numeric(n_conditions)
+        min_vals <- numeric(n_conditions)
+        max_vals <- numeric(n_conditions)
+        for(i in 0:(n_conditions-1)) {
+            condition_data <- pred_data[pred_data$condition_id == i, ]
+            min_subset <- condition_data[condition_data$d %in% min_days, ]
+            min_idx <- which.min(min_subset$pred)
+            min_rows[i+1] <- which(pred_data$condition_id == i &
+                                pred_data$d == min_subset$d[min_idx])
+            min_days_found[i+1] <- min_subset$d[min_idx]
+            min_vals[i+1] <- min_subset$pred[min_idx]
+            max_subset <- condition_data[condition_data$d %in% max_days, ]
+            max_idx <- which.max(max_subset$pred)
+            max_rows[i+1] <- which(pred_data$condition_id == i &
+                                pred_data$d == max_subset$d[max_idx])
+            max_days_found[i+1] <- max_subset$d[max_idx]
+            max_vals[i+1] <- max_subset$pred[max_idx]
+            ranges[i+1] <- max_subset$pred[max_idx] - min_subset$pred[min_idx]
+        }
+        Vb <- vcov(gam_model)
+        # Contrasts
+        min_contrast_vector <- X[min_rows[n_conditions],] - X[min_rows[1],]
+        max_contrast_vector <- X[max_rows[n_conditions],] - X[max_rows[1],]
+        range_contrast_vector <- (X[max_rows[n_conditions],] - X[min_rows[n_conditions],]) -
+                                (X[max_rows[1],] - X[min_rows[1],])
+        min_contrast <- min_vals[n_conditions] - min_vals[1]
+        max_contrast <- max_vals[n_conditions] - max_vals[1]
+        range_contrast <- ranges[n_conditions] - ranges[1]
+        min_var <- t(min_contrast_vector) %*% Vb %*% min_contrast_vector
+        max_var <- t(max_contrast_vector) %*% Vb %*% max_contrast_vector
+        range_var <- t(range_contrast_vector) %*% Vb %*% range_contrast_vector
+        sigma_resid <- sqrt(gam_model$sig2)
+        list(
+            range_contrast = range_contrast,
+            se = as.numeric(sqrt(range_var)),
+            min_contrast = min_contrast,
+            min_se = as.numeric(sqrt(min_var)),
+            max_contrast = max_contrast,
+            max_se = as.numeric(sqrt(max_var)),
+            sigma_resid = sigma_resid,
+            ranges = ranges,
+            min_rows = min_rows,
+            max_rows = max_rows,
+            min_days_found = min_days_found,
+            max_days_found = max_days_found,
+            min_vals = min_vals,
+            max_vals = max_vals
+        )
+        """
+        try:
+            result = ro.r(r_code)
+            df_resid = gam_model.rx2('df.residual')[0]
+            t_crit = ro.r('qt')(0.975, df_resid)[0]
+            sigma_resid = result.rx2('sigma_resid')[0]
+
+            range_c = result.rx2('range_contrast')[0]
+            range_se = result.rx2('se')[0]
+            min_c = result.rx2('min_contrast')[0]
+            min_se = result.rx2('min_se')[0]
+            max_c = result.rx2('max_contrast')[0]
+            max_se = result.rx2('max_se')[0]
+
+            return {
+                'range_contrast': range_c,
+                'se': range_se,
+                'ci_lower': range_c - t_crit * range_se,
+                'ci_upper': range_c + t_crit * range_se,
+                'cohens_d': range_c / sigma_resid,
+                'min_contrast': min_c,
+                'min_se': min_se,
+                'min_ci_lower': min_c - t_crit * min_se,
+                'min_ci_upper': min_c + t_crit * min_se,
+                'max_contrast': max_c,
+                'max_se': max_se,
+                'max_ci_lower': max_c - t_crit * max_se,
+                'max_ci_upper': max_c + t_crit * max_se,
+                'sigma_resid': sigma_resid,
+                'individual_ranges': np.array(result.rx2('ranges')),
+                'conditions': range_conditions,
+                'min_days_found': np.array(result.rx2('min_days_found')),
+                'max_days_found': np.array(result.rx2('max_days_found')),
+                'min_vals': np.array(result.rx2('min_vals')),
+                'max_vals': np.array(result.rx2('max_vals')),
+            }
+        except Exception as e:
+            print(f"R execution failed: {e}")
+            print("\nPython prediction data we're passing to R:")
+            print(pred_data.dtypes)
+            print(pred_data.describe())
+            try:
+                ro.r.assign('test_pred_data', r_pred_data)
+                test_result = ro.r('predict(gam_model, newdata=test_pred_data)')
+                print("Basic prediction succeeded, data format should be OK")
+            except Exception as e2:
+                print(f"Basic prediction failed: {e2}")
+            raise e
+
+    def print_gam_age_contrast(self, biometric, age1=24, age2=44, cl=28):
+        age_range_contrast = self.compute_gam_range_contrast_r(
+            biometric=biometric,
+            range_conditions=[
+                {'age': age1},
+                {'age': age2}
+            ],
+            fixed_covariates={'cl': cl}
+        )
+        print("-----")
+        print(f"Age={age1}")
+        print(f"range_val={age_range_contrast['individual_ranges'][0]:.3f}")
+        print(f"min_day={age_range_contrast['min_days_found'][0]:.3f}")
+        print(f"max_day={age_range_contrast['max_days_found'][0]:.3f}")
+        print(f"min_val={age_range_contrast['min_vals'][0]:.3f}")
+        print(f"max_val={age_range_contrast['max_vals'][0]:.3f}")
+
+        print("-----")
+        print(f"Age={age2}")
+        print(f"range_val={age_range_contrast['individual_ranges'][1]:.3f}")
+        print(f"min_day={age_range_contrast['min_days_found'][1]:.3f}")
+        print(f"max_day={age_range_contrast['max_days_found'][1]:.3f}")
+        print(f"min_val={age_range_contrast['min_vals'][1]:.3f}")
+        print(f"max_val={age_range_contrast['max_vals'][1]:.3f}")
+
+        print("-----")
+        print(f"Comparing ages {age1} and {age2} at CL={cl}")
+        print(f"Range effect on range: {age_range_contrast['range_contrast']:.3f} ± {age_range_contrast['se']:.3f}")
+        print(f"Confidence Interval: {age_range_contrast['ci_lower']:.3f} - {age_range_contrast['ci_upper']:.3f}")
+        print(f"cohens_d={age_range_contrast['cohens_d']:.3f}")
+
+    def print_gam_cl_contrast(self, biometric, cl1=24, cl2=34, age=32):
+        cl_range_contrast = self.compute_gam_range_contrast_r(
+            biometric=biometric,
+            range_conditions=[
+                {'cl': cl1},
+                {'cl': cl2}
+            ],
+            fixed_covariates={'age': age}
+        )
+
+        print("-----")
+        print(f"CL={cl1}")
+        print(f"range_val={cl_range_contrast['individual_ranges'][0]:.3f}")
+        print(f"min_day={cl_range_contrast['min_days_found'][0]:.3f}")
+        print(f"max_day={cl_range_contrast['max_days_found'][0]:.3f}")
+        print(f"min_val={cl_range_contrast['min_vals'][0]:.3f}")
+        print(f"max_val={cl_range_contrast['max_vals'][0]:.3f}")
+
+        print("-----")
+        print(f"CL={cl2}")
+        print(f"range_val={cl_range_contrast['individual_ranges'][1]:.3f}")
+        print(f"min_day={cl_range_contrast['min_days_found'][1]:.3f}")
+        print(f"max_day={cl_range_contrast['max_days_found'][1]:.3f}")
+        print(f"min_val={cl_range_contrast['min_vals'][1]:.3f}")
+        print(f"max_val={cl_range_contrast['max_vals'][1]:.3f}")
+
+        print("-----")
+        print(f"Comparing CL={cl1} and CL={cl2} at Age={age}")
+        print(f"Range effect on range: {cl_range_contrast['range_contrast']:.3f} ± {cl_range_contrast['se']:.3f}")
+        print(f"Confidence Interval: {cl_range_contrast['ci_lower']:.3f} - {cl_range_contrast['ci_upper']:.3f}")
+        print(f"cohens_d={cl_range_contrast['cohens_d']:.3f}")
+
+    def _add_period_segment(self, ax, y_min=None, y_max=None):
+        """
+        Add a visual segment for the period on the plot.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            The axes to draw on.
+        y_min : float, optional
+            Lower y-limit for the segment. If None, uses ax.get_ylim()[0].
+        y_max : float, optional
+            Upper y-limit for the segment. If None, uses ax.get_ylim()[1].
+        """
+        if y_min is None or y_max is None:
+            ylims = ax.get_ylim()
+            if y_min is None:
+                y_min = ylims[0]
+            if y_max is None:
+                y_max = ylims[1]
+        y_delta = y_max - y_min
+        alpha1 = 0.15
+        alpha2 = 0.3
+        alpha3 = 0
+        draw_rectangle_gradient(ax, 0, y_min, 2, y_delta, color1='#9e0d0d', color2='#9e0d0d', alpha1=alpha1, alpha2=alpha2)
+        rect = mpl.patches.Rectangle((2, y_min), 1, y_delta, facecolor='#9e0d0d', alpha=alpha2, lw=0, zorder=-1)
+        ax.add_patch(rect)
+        draw_rectangle_gradient(ax, 3, y_min, 3, y_delta, color1='#9e0d0d', color2='#9e0d0d', alpha1=alpha2, alpha2=alpha3)
+
+    def plot_physio_model_pred(self, test_data, data_column, hue_var='age',
+                               locked_phase='follicular',
+                               ax=None, legend=True,
+                               plot_period_seg=True,
+                               alpha=1,
+                               ytick_digits=2,
+                               errorbar=False):
+
+        d_range = self.locking_params[locked_phase]['d_range']
+        xticks = self.locking_params[locked_phase]['xticks']
+
+        test_data= test_data.copy(deep=True)
+        test_data['age'] = test_data['age'].astype(int).astype(str)
+
+        if hue_var == 'age':
+            hue_order = self.age_bin_centers.astype(int).astype(str)
+            pal = self.palettes[hue_var]
+        elif hue_var == 'cl':
+            hue_order = self.CL_bins[::-1]
+            pal = self.palettes[hue_var][::-1]
+        else:
+            hue_order = sorted(test_data[hue_var].unique())
+            pal = sns.color_palette("tab10", n_colors=len(hue_order))
+
+        with plt.rc_context(rc=self.plotting_params):
+            if ax is None:
+                f, ax = plt.subplots(figsize=(6, 3.5),
+                                     constrained_layout=False)
+                setup_axes(ax)
+
+            sns.lineplot(data=test_data, x='d', y=data_column, hue=hue_var, ax=ax, palette=pal,
+                         alpha=alpha, errorbar=None, hue_order=hue_order, lw=1.5)
+            # Optionally add error bands if errorbar is a tuple/list and test_data contains ci columns
+            if errorbar:
+                lower_col = f"{data_column}_lower"
+                upper_col = f"{data_column}_upper"
+                for key, grp in test_data[test_data[hue_var].isin(hue_order)].groupby(hue_var):
+                    color = pal[hue_order.index(key)]
+                    ax.fill_between(
+                        grp['d'],
+                        grp[lower_col],
+                        grp[upper_col],
+                        alpha=0.15,
+                        color=color,
+                        linewidth=0
+                    )
+
+
+            ax.set_xlabel("Cycle Day")
+            if data_column in self.plotting_labels:
+                ax.set_ylabel("Pred. " + self.plotting_physio_labels_short_units[data_column])
+            ax.set_xticks(xticks)
+
+            if legend:
+                add_legend(ax, title=self.plotting_labels[hue_var])
+            else:
+                ax.legend().remove()
+
+            fixed_yticks(ax, n_digits_input=ytick_digits, symmetrical_around_zero=True, n_ticks=3)
+
+
+            if plot_period_seg:
+                self._add_period_segment(ax)
+
+        return ax
+
+    def plot_gam_biometrics_cl_age(self, gam_data, plot_period_seg=True, errorbar=None, fixed_age=32, fixed_cl=28):
+
+        locked_phase='follicular'
+
+        n_rows = len(self.CORE_BIOMETRICS)
+        alpha = 0.85
+        with plt.rc_context(rc=self.plotting_params):
+            f, axs = plt.subplots(n_rows, 2, dpi=self.PLOT_DPI, figsize=(6, 1.1*n_rows),
+                                  gridspec_kw={'wspace': 0.15, 'hspace': 0.25})
+
+            for jj, hue_var in enumerate(['age', 'cl']):
+                if hue_var == 'age':
+                    d = gam_data[(gam_data.cl == fixed_cl) & (gam_data.age.isin(self.age_bin_centers))]
+                elif hue_var == 'cl':
+                    d = gam_data[(gam_data.age == fixed_age) & (gam_data.cl.isin(self.CL_bins))]
+                for ii, vv in enumerate(self.gam_models.keys()):
+                    ax = axs[ii, jj]
+                    setup_axes(ax)
+                    if jj == 1:
+                        ax.set_ylim(axs[ii, 0].get_ylim())
+                        ax.set_yticks(axs[ii, 0].get_yticks())
+
+                    data_column = f"{vv}_pred"
+                    self.plot_physio_model_pred(d,
+                                                data_column=data_column,
+                                                hue_var=hue_var,
+                                                locked_phase=locked_phase,
+                                                ax=ax, legend=False,
+                                                ytick_digits=1, errorbar=errorbar,
+                                                alpha=alpha,
+                                                plot_period_seg=plot_period_seg)
+
+                    ax.set_xticks(np.arange(-7, 36, 7))
+
+                    if jj==0:
+                        ax.set_ylabel(self.plotting_physio_labels_short_units[vv])
+                        ax.yaxis.set_label_coords(-0.12, 0.5)
+                    else:
+                        ax.set_ylabel("")
+                        ax.set_yticklabels([])
+                    if ii < (n_rows - 1):
+                        ax.set_xlabel("")
+                        ax.set_xticklabels([])
+
+                    if locked_phase=='follicular':
+                        ax.set_xlim([-10, 35])
+                    elif locked_phase=='luteal':
+                        ax.set_xlim([-7, 28])
+
+            l1 = self._add_colorbar_legend(ax=axs[0,0], cmap=self.palettes['age'], levels=self.age_bin_centers,
+                                            step=4, y_delta=1.25, position='top', height_factor=0.1)
+
+            l1.set_xticks(np.arange(len(self.age_bin_centers)))
+            l1.set_xticklabels(self.age_bin_centers, fontsize=self.plotting_params.get('legend.fontsize'))
+            l1.spines['bottom'].set_linewidth(0)
+            l1.set_title("Age [years]", fontsize=self.plotting_params.get('legend.fontsize'))
+            l1.tick_params(length=1)
+
+            l2 = self._add_colorbar_legend(ax=axs[0,1], cmap=self.palettes['cl'], levels=np.array(self.CL_bins),
+                                            step=2, y_delta=1.25, position='top', height_factor=0.1)
+            l2.set_xticks(np.arange(len(self.CL_bins)))
+            l2.set_xticklabels(self.CL_bins, fontsize=self.plotting_params.get('legend.fontsize'))
+            l2.spines['bottom'].set_linewidth(0)
+            l2.set_title("Cycle Length [days]", fontsize=self.plotting_params.get('legend.fontsize'))
+            l2.tick_params(length=1)
+
+        label_size = self.plotting_params.get('font.size')
+        f.text(0.06, 0.95, "a.", ha='left', va='top', fontsize=label_size, fontweight='bold')
+        f.text(0.51, 0.95, "b.", ha='left', va='top',
+                fontsize=label_size, fontweight='bold')
+        return f, axs
+
+    def _add_colorbar_legend(self, ax, cmap, levels, step, y_delta=0.4, position='bottom', height_factor=0.15):
+        """
+        Add a colorbar legend (either at the bottom or top of the given axes).
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            The axes to which the legend will be attached.
+        cmap : str or Colormap
+            The colormap to use.
+        levels : array-like
+            The levels to display.
+        step : int
+            Step size for tick labels.
+        y_delta : float, optional
+            Relative vertical offset for the legend.
+        position : str, optional
+            'bottom' or 'top' (default: 'bottom')
+        """
+        p = ax.get_position()
+        f = ax.figure
+        if position == 'bottom':
+            y = p.y0 - y_delta * p.height
+        elif position == 'top':
+            y = p.y0 + y_delta * p.height
+        else:
+            raise ValueError("position must be 'bottom' or 'top'")
+        l1 = f.add_axes([p.x0, y, p.width, height_factor * p.height])
+
+        # Convert palette to colormap if needed
+        if isinstance(cmap, (list, tuple)):
+            # If cmap is a list of colors, create a ListedColormap
+            from matplotlib.colors import ListedColormap
+            cmap = ListedColormap(cmap)
+        elif isinstance(cmap, str):
+            # If it's a string, matplotlib will handle it
+            pass
+
+        l1.imshow(np.vstack((levels, levels)), aspect='auto', cmap=cmap)
+        setup_axes(l1, spine_list=['bottom'])
+        l1.set_xticks(np.arange(1, len(levels), step))
+        l1.set_xticklabels(levels[1::step].astype(int))
+        l1.yaxis.set_ticks([])                  # Remove y-axis ticks
+        l1.yaxis.set_ticklabels([])             # Remove y-axis labels
+        l1.grid(False)
+
+        return l1
 
 
 # ---------------------------------------------------------------------------

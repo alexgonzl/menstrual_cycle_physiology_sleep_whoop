@@ -235,3 +235,73 @@ def single_var_point_plot(
     ax.set_xticks(range(n_x))
     ax.set_xticklabels(gdata.index.values)
     return ax
+
+
+def cname2hex(cname):
+    colors = dict(mpl.colors.BASE_COLORS, **mpl.colors.CSS4_COLORS) # dictionary. key: names, values: hex codes
+    try:
+        hex = colors[cname]
+        return hex
+    except KeyError:
+        print(cname, ' is not registered as default colors by matplotlib!')
+        return None
+
+
+def hex2rgb(hex, normalize=False):
+    h = hex.strip('#')
+    rgb = np.asarray(list(int(h[i:i + 2], 16) for i in (0, 2, 4)))
+    return rgb
+
+
+def draw_rectangle_gradient(ax, x1, y1, width, height, color1='white', color2='blue', alpha1=0.0, alpha2=0.5, n=100):
+    # convert color names to rgb if rgb is not given as arguments
+    if not color1.startswith('#'):
+        color1 = cname2hex(color1)
+    if not color2.startswith('#'):
+        color2 = cname2hex(color2)
+    color1 = hex2rgb(color1) / 255.  # np array
+    color2 = hex2rgb(color2) / 255.  # np array
+
+
+    # Create an array of the linear gradient between the two colors
+    gradient_colors = []
+    for segment in np.linspace(0, width, n):
+        interp_color = [(1 - segment / width) * color1[j] + (segment / width) * color2[j] for j in range(3)]
+        interp_alpha = (1 - segment / width) * alpha1 + (segment / width) * alpha2
+        gradient_colors.append((*interp_color, interp_alpha))
+    for i, color in enumerate(gradient_colors):
+        ax.add_patch(plt.Rectangle((x1 + width/n * i, y1), width/n, height, color=color, linewidth=0, zorder=0))
+    return ax
+
+
+def add_legend(ax, title=None, labels=None, handles=None,
+                bbox_to_anchor=[1, 0.05, 0.2, 0.8], loc=3, reverse_labels=False, **kwargs):
+    if handles is None:
+        handles, labels2 = ax.get_legend_handles_labels()
+        if labels is None:
+            labels = labels2
+
+    if reverse_labels:
+        handles = handles[::-1]
+        labels = labels[::-1]
+
+    if len(handles) == 0:
+        return
+
+    if 'handlelength' not in kwargs:
+        kwargs['handlelength'] = 1
+    if 'labelspacing' not in kwargs:
+        kwargs['labelspacing'] = 0.5
+
+    ax.legend().remove()
+    f = ax.figure
+    l = f.legend(
+        handles, labels, loc=loc, bbox_to_anchor=bbox_to_anchor, title=title,
+        frameon=True, fancybox=True,
+        **kwargs
+    )
+    l.get_frame().set_linewidth(0)
+    l.get_frame().set_facecolor('0.97')
+    l.get_frame().set_alpha(0.9)
+
+    return l
