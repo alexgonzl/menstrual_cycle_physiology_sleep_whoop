@@ -1393,6 +1393,189 @@ class PhysioMethods(CycleBehavMethods):
 
         return l1
 
+    def plot_data_x_day_cl(self, data_column, locked_phase='follicular', ax=None, users=None, line_color=None,
+                           legend=True, plot_period_seg=True, errorbar=('ci', 95), ytick_digits=2, alpha=1, cl_bins=None, lw=1.5):
+
+        d_range = self.locking_params[locked_phase]['d_range']
+        xticks = self.locking_params[locked_phase]['xticks']
+
+        t = self.reference_table[self.reference_table.cycle_day.isin(d_range)]
+        if users is not None:
+            t = t[t.n_id.isin(users)]
+        a = t.groupby(["n_id", "cl_bin", 'cycle_day'], observed=True)[data_column].mean().reset_index()
+
+        pal = self.palettes['cl'][::-1]
+        CL_bins = pd.Series(self.CL_bins[::-1])
+        if cl_bins is not None:
+
+            cl_idx = CL_bins[CL_bins.isin(cl_bins)].index.values
+            CL_bins = CL_bins[cl_idx].values
+
+            if line_color is not None:
+                pal = [line_color] * len(cl_idx)
+            else:
+                pal = [pal[ii] for ii in cl_idx]
+
+            a = a[a.cl_bin.isin(CL_bins)]
+            a['cl_bin'] = pd.Categorical(a['cl_bin'], categories=CL_bins, ordered=True)
+
+        with plt.rc_context(rc=self.plotting_params):
+            if ax is None:
+                f, ax = plt.subplots(figsize=(6, 3.5),
+                                     constrained_layout=False)
+                setup_axes(ax)
+
+            sns.lineplot(data=a, x='cycle_day', y=data_column, hue="cl_bin", ax=ax, palette=pal,
+                         errorbar=errorbar, hue_order=CL_bins, lw=lw, err_kws={'lw': 0, 'alpha': alpha})
+            ax.set_xticks(xticks)
+            ax.set_xlabel("Cycle Day")
+            if data_column in self.plotting_labels:
+                ax.set_ylabel(self.plotting_labels[data_column])
+
+            if data_column[:2] in ['m_', 'z_', 'rz']:
+                symmetrical_around_zero = True
+            else:
+                symmetrical_around_zero = False
+
+            fixed_yticks(ax, n_digits_input=ytick_digits, symmetrical_around_zero=symmetrical_around_zero, n_ticks=3)
+
+            if legend:
+                self._add_legend_cl(ax)
+            else:
+                ax.legend().remove()
+
+            if plot_period_seg:
+                self._add_period_segment(ax)
+
+    def plot_data_x_day_age(self, data_column, locked_phase='follicular',
+                            min_subjects=50, ax=None, legend=True, errorbar=('ci', 95),
+                            plot_period_seg=True, ytick_digits=2,
+                            alpha=1, lw=1.5):
+
+        d_range = self.locking_params[locked_phase]['d_range']
+        xticks = self.locking_params[locked_phase]['xticks']
+
+        t = self.reference_table[self.reference_table.cycle_day.isin(d_range)]
+
+        # group and mean variable x cycle
+        a = pd.DataFrame(t.groupby(['n_id', 'cycle_day', 'age_b'], observed=True)[data_column].count())
+        a.rename(columns={data_column: 's_counts'}, inplace=True)
+        a[data_column] = t.groupby(['n_id', 'cycle_day', 'age_b'], observed=True)[data_column].mean()
+        a = a.reset_index()
+
+        # group again across subjects
+        b = pd.DataFrame(a.groupby(['cycle_day', 'age_b'], observed=True)['s_counts'].sum())
+        b[data_column] = a.groupby(['cycle_day', 'age_b'], observed=True)[data_column].mean()
+        b = b[b.s_counts >= min_subjects].reset_index()
+
+        with plt.rc_context(rc=self.plotting_params):
+            if ax is None:
+                f, ax = plt.subplots(figsize=(6, 3.5),
+                                     constrained_layout=False)
+                setup_axes(ax)
+
+            sns.lineplot(data=b, x='cycle_day', y=data_column, hue='age_b', ax=ax,
+                         palette=self.palettes['age'], errorbar=errorbar, alpha=alpha, lw=lw)
+            ax.set_xlabel("Cycle Day")
+            ax.set_xticks(xticks)
+            if data_column in self.plotting_labels:
+                ax.set_ylabel(self.plotting_labels[data_column])
+
+
+            if data_column[:2] in ['m_', 'z_', 'rz']:
+                symmetrical_around_zero = True
+            else:
+                symmetrical_around_zero = False
+            fixed_yticks(ax, n_digits_input=ytick_digits, symmetrical_around_zero=symmetrical_around_zero, n_ticks=3)
+
+            if legend:
+                add_legend(ax, title='Age', bbox_to_anchor=[0.9, 0.1, 0.2, 0.8])
+            else:
+                ax.legend().remove()
+
+
+            if plot_period_seg:
+                self._add_period_segment(ax)
+
+    def plot_biometrics_cl_age(self, locked_phase='follicular', prefix='m',
+                       plot_period_seg=True, errorbar=None):
+
+        n_rows = len(self.CORE_BIOMETRICS)
+        alpha=0.85
+
+        with plt.rc_context(rc=self.plotting_params):
+            f, axs = plt.subplots(n_rows, 2, dpi=self.PLOT_DPI, figsize=(6, 1.1*n_rows),
+                                  gridspec_kw={'wspace': 0.15, 'hspace': 0.25})
+
+            for jj, hue_var in enumerate(['age', 'cl']):
+                for ii, vv in enumerate(self.CORE_BIOMETRICS):
+                    ax= axs[ii, jj]
+                    plot_var = f"{prefix}_{vv}"
+                    setup_axes(ax)
+                    ytick_sig_fig_digits = 1
+                    if plot_var in ['pct_skin_temp']:
+                        ax.set_ylim([-1.05, 1.05])
+                    if hue_var=='age':
+                        self.plot_data_x_day_age(plot_var, locked_phase=locked_phase,
+                                                ax=ax, legend=False,
+                                                ytick_digits=ytick_sig_fig_digits, errorbar=errorbar,
+                                                alpha=alpha)
+                    elif hue_var=='cl':
+                        ax.set_ylim(axs[ii, 0].get_ylim())
+                        ax.set_yticks(axs[ii, 0].get_yticks())
+                        self.plot_data_x_day_cl(plot_var,ax=ax,
+                                                locked_phase=locked_phase,
+                                                legend=False,
+                                                ytick_digits=ytick_sig_fig_digits, errorbar=errorbar,
+                                                alpha=alpha)
+
+                    if jj==0:
+                        ax.set_ylabel(self.plotting_physio_labels_short_units[plot_var])
+                        ax.yaxis.set_label_coords(-0.12, 0.5)
+                    else:
+                        ax.set_ylabel("")
+                        ax.set_yticklabels([])
+                    if ii < (n_rows - 1):
+                        ax.set_xlabel("")
+                        ax.set_xticklabels([])
+
+                    if locked_phase=='follicular':
+                        ax.set_xlim([-10, 35])
+                        ax.set_xticks(np.arange(-7, 36, 7))
+
+            l1 = self._add_colorbar_legend(ax=axs[0, 0], cmap=self.palettes['age'], levels=self.age_bin_centers, step=4, y_delta=1.25, position='top', height_factor=0.1)
+
+            l1.set_xticks(np.arange(-0.5, len(self.age_bin_centers)))
+            l1.set_xticklabels(self.age_bin_edges, fontsize=self.plotting_params.get('legend.fontsize'))
+            l1.spines['bottom'].set_linewidth(0)
+            l1.set_title("Age [years]", fontsize=self.plotting_params.get('legend.fontsize'))
+            l1.tick_params(length=1)
+
+            l2 = self._add_colorbar_legend(ax=axs[0,1], cmap=self.palettes['cl'], levels=np.array(self.CL_bins),
+                                            step=2, y_delta=1.25, position='top', height_factor=0.1)
+            l2.set_xticks(np.arange(-0.5, len(self.CL_bins)))
+            l2.set_xticklabels(self.CL_bin_edges.astype(int), fontsize=self.plotting_params.get('legend.fontsize'))
+            l2.spines['bottom'].set_linewidth(0)
+            l2.set_title("Cycle Length [days]", fontsize=self.plotting_params.get('legend.fontsize'))
+            l2.tick_params(length=1)
+
+        label_size = self.plotting_params.get('font.size')
+        f.text(0.06, 0.95, "a.", ha='left', va='top', fontsize=label_size, fontweight='bold')
+        f.text(0.51, 0.95, "b.", ha='left', va='top',
+                fontsize=label_size, fontweight='bold')
+        return f, axs
+
+    def _add_legend_cl(self, ax):
+        h, l = ax.get_legend_handles_labels()
+        if len(h) == 0:
+            return
+        ax.legend().remove()
+        f = ax.figure
+        l = f.legend(h, l, loc=3, bbox_to_anchor=[1, 0.05, 0.2, 0.8], title="CL", frameon=True, handlelength=1, fancybox=True, labelspacing=0.2)
+        l.get_frame().set_linewidth(0)
+        l.get_frame().set_facecolor('0.97')
+        l.get_frame().set_alpha(0.9)
+
     def _add_user_level_biometrics(self, prefix=None):
         if prefix is None:
             prefix = ''
