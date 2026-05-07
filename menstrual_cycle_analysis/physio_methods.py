@@ -35,6 +35,7 @@ from ._plot_utils import (
     draw_rectangle_gradient,
     fixed_yticks,
     setup_axes,
+    single_var_point_plot,
 )
 from .cl_behav_methods import CycleBehavMethods
 from .stats.circular import circmean_day, circvar_day
@@ -1391,6 +1392,84 @@ class PhysioMethods(CycleBehavMethods):
         l1.grid(False)
 
         return l1
+
+    def _add_user_level_biometrics(self, prefix=None):
+        if prefix is None:
+            prefix = ''
+            cols = self.CORE_BIOMETRICS
+        else:
+            cols = [f"{prefix}_{col}" for col in self.CORE_BIOMETRICS]
+
+        # Check if already run
+        if all(f"{prefix}{col}" in self.tables['user'].columns for col in cols):
+            return
+
+        #biometric_avg = pd.DataFrame(index=self.users, columns=cols)
+        for kk in cols:
+            self.tables['user'][kk] = self.data.groupby("n_id")[kk].mean()
+            self.tables['user'][kk + '_std'] = self.data.groupby("n_id")[kk].std()
+
+        #self.tables['user'] = pd.concat([self.tables['user'], biometric_avg], axis=1)
+
+    # Plotting Routines
+    def plot_user_level_biometrics_vs_x(self, x_var='age_b', prefix=None, save_fig=False):
+        self._add_user_level_biometrics(prefix=prefix)
+        t = self.tables['user']
+
+        with plt.rc_context(rc=self.plotting_params):
+            fig, axes = plt.subplots(5, 2, figsize=(6, 7), sharex=True)
+            biometrics = [f"{prefix}_{vv}" for vv in self.CORE_BIOMETRICS] if prefix else self.CORE_BIOMETRICS
+            std_suffix = '_std'
+
+            if x_var not in self.plotting_labels:
+                x_var_core = x_var.replace('_bin', '')
+                if x_var_core in self.plotting_labels:
+                    x_label = self.plotting_labels[x_var_core]
+                else:
+                    x_label = ''
+            else:
+                x_label = self.plotting_labels[x_var]
+            x_label = x_label.replace('\n', '')
+
+            for i, biom in enumerate(biometrics):
+                setup_axes(axes[i, 0])
+
+                single_var_point_plot(data=t, x_var=x_var, y_var=biom, ax=axes[i, 0], join_points=False, add_counts=(i == 0), ms=6, dy_factor=0.02)
+                axes[i, 0].set_ylabel(self.plotting_physio_labels_short_units[biom])
+                axes[i, 0].yaxis.set_label_coords(-0.12, 0.5)
+                axes[i, 0].set_xlabel('' if i < 4 else x_label)
+                fixed_yticks(axes[i, 0], n_ticks=3, n_digits_input=1)
+
+                # Std plot
+                setup_axes(axes[i, 1])
+                single_var_point_plot(data=t, x_var=x_var, y_var=biom + std_suffix, ax=axes[i, 1], join_points=False, add_counts=(i == 0), ms=6, dy_factor=0.02)
+                axes[i, 1].set_ylabel("")
+                axes[i, 1].set_xlabel('' if i < 4 else x_label)
+
+                if biom in ['RR','skin_temp', 'm_RR', 'm_skin_temp']:
+                    fixed_yticks(axes[i, 1], n_ticks=3, n_digits_input=2)
+                else:
+                    fixed_yticks(axes[i, 1], n_ticks=3, n_digits_input=1)
+
+                if i == 0:
+                    axes[i, 0].set_title('Mean', fontsize=self.plotting_params['axes.labelsize'])
+                    axes[i, 1].set_title('Standard Deviation', fontsize=self.plotting_params['axes.labelsize'])
+
+                axes[i, 0].grid(axis='x', visible=False)
+                axes[i, 1].grid(axis='x', visible=False)
+
+                if x_var == 'age_b':
+                    axes[i, 0].set_xticklabels(self.age_bin_centers2, rotation=45)
+                    axes[i, 1].set_xticklabels(self.age_bin_centers2, rotation=45)
+                elif x_var == 'BMI_b2':
+                    axes[i, 0].set_xticklabels(self.bmi_bin_centers2, rotation=45)
+                    axes[i, 1].set_xticklabels(self.bmi_bin_centers2, rotation=45)
+
+            plt.tight_layout()
+
+
+
+            return fig, axes
 
 
 # ---------------------------------------------------------------------------
