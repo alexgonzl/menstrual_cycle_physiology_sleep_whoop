@@ -394,3 +394,140 @@ class PhysioBehaviorAnalyses:
                 self.save_fig(fig, filename_prefix, extension='png')
 
             return fig, axes
+
+    # =================== S14 (5-biometric grid) ===================
+    def plot_model_physio_response_x_phase_all(self,
+                                               behav_var='acr_sleep_dur', physio_prefix=None,
+                                               save=False, filename_prefix=None):
+        """S14 — 5x3 grid (biometrics x phases) of model fit + per-bin scatter."""
+        if physio_prefix is None:
+            physio_prefix = self.physio_prefix
+
+        df = self.pbcm.behav_change_phase_data[behav_var]
+        cfg = self.pbcm.behav_configs[behav_var]
+
+        phases = df['phase'].unique()
+        acr_eval_vals = cfg['acr_eval_vals']
+        label_mapping = cfg['label_mapping']
+
+        model_rescale, model_shift, model_evals = self.cla._get_axis_rescaling_params(cfg['group_bins'])
+
+        ylim_config = {
+            'pct_RHR': {'ylim': [-2.5, 2.5], 'yticks': [-2, 0, 2]},
+            'pct_RR': {'ylim': [-0.8, 0.8], 'yticks': [-0.6, 0, 0.6]},
+            'pct_skin_temp': {'ylim': [-0.4, 0.4], 'yticks': [-0.3, 0, 0.3]},
+            'pct_HRV': {'ylim': [-8, 8], 'yticks': [-6, 0, 6]},
+            'pct_blood_oxygen': {'ylim': [-0.2, 0.2], 'yticks': [-0.1, 0, 0.1]},
+        }
+        ylim_config |= {
+            'pct_behavioral_RHR': {'ylim': [-3, 3], 'yticks': [-2.5, 0, 2.5]},
+            'pct_behavioral_HRV': {'ylim': [-8, 8], 'yticks': [-6, 0, 6]},
+            'pct_behavioral_RR': {'ylim': [-1.4, 1.4], 'yticks': [-1.0, 0, 1.0]},
+            'pct_behavioral_skin_temp': {'ylim': [-0.55, 0.55], 'yticks': [-0.4, 0, 0.4]},
+            'pct_behavioral_blood_oxygen': {'ylim': [-0.4, 0.4], 'yticks': [-0.3, 0, 0.3]},
+        }
+
+        with plt.rc_context(rc=self.plotting_params):
+            fig, axes = plt.subplots(5, 3, figsize=(6, 6), sharex='col', sharey='row', constrained_layout=True)
+
+            for jj, physio_var in enumerate(self.CORE_BIOMETRICS):
+                prefix_physio_var = f'{physio_prefix}_{physio_var}'
+                model = self.behav_physio_models[behav_var][physio_var]
+                out = pd.DataFrame()
+                for phase in phases:
+                    sph = StatisticalPredictionHandler(model, df[df.phase == phase])
+                    temp = sph.get_conditional_predictions('acr', eval_vals=acr_eval_vals)
+                    temp['phase'] = phase
+                    out = pd.concat([out, temp], ignore_index=True)
+
+                row_axes = axes[jj, :]
+                for ii, phase in enumerate(phases):
+                    ax = row_axes[ii]
+                    setup_axes(ax)
+
+                    phase_data = df[df['phase'] == phase].copy()
+
+                    offset = phase_data.loc[phase_data[f'{behav_var}_bin_groups'] == 'no_change', prefix_physio_var].mean()
+                    physio_var_offset = f'{prefix_physio_var}_offset'
+                    phase_data[physio_var_offset] = phase_data[prefix_physio_var] - offset
+
+                    subj_phase_data = (phase_data.groupby(['n_id', f'{behav_var}_bin_groups'], observed=True)
+                                       [physio_var_offset].mean().reset_index())
+
+                    for change_group, color in self.pbcm.change_colors.items():
+                        group_data = subj_phase_data[subj_phase_data[f'{behav_var}_bin_groups'] == change_group].dropna()
+                        group_data[f'{behav_var}_bin_groups'].cat.remove_unused_categories()
+                        if len(group_data) > 0:
+                            single_var_point_plot(
+                                data=group_data,
+                                x_var=f'{behav_var}_bin_groups',
+                                y_var=physio_var_offset,
+                                ax=ax,
+                                join_points=False,
+                                color=color,
+                                marker_edge_color='0.4',
+                                ms=5,
+                                lw=2,
+                                dy_factor=None
+                            )
+
+                    offset_x = 0.9 if physio_var in ['HRV', 'blood_oxygen'] else 0.05
+                    offset_ha = 'right' if physio_var in ['HRV', 'blood_oxygen'] else 'left'
+                    ax.text(
+                        offset_x, 0.1,
+                        f'Offset: {offset:.2f}',
+                        ha=offset_ha, va='bottom',
+                        transform=ax.transAxes,
+                        fontsize=9, color='0.2'
+                    )
+
+                    ax.set_xticks(np.arange(len(label_mapping)))
+                    ax.grid(axis='x', linestyle='None', color='1')
+                    ax.set_xticklabels([])
+                    ax.set_xlabel('')
+
+                    phase_out = out[out['phase'] == phase].copy()
+                    phase_out['acr'] = phase_out['acr'] * model_rescale + model_shift
+
+                    for kk in ['pred', 'pred_ci_lower', 'pred_ci_upper']:
+                        phase_out[kk + '_offset'] = phase_out[kk] - offset
+
+                    ax.plot(phase_out['acr'], phase_out['pred_offset'],
+                            color='#2964d9',
+                            lw=2, label='Model fit', zorder=1, alpha=0.5)
+                    ax.fill_between(
+                        phase_out['acr'],
+                        phase_out['pred_ci_lower_offset'],
+                        phase_out['pred_ci_upper_offset'],
+                        color='#2964d9', alpha=0.15, label='95% CI', lw=0, zorder=1
+                    )
+
+                    if prefix_physio_var in ylim_config:
+                        ax.set_ylim(ylim_config[prefix_physio_var]['ylim'])
+                        ax.set_yticks(ylim_config[prefix_physio_var]['yticks'])
+
+                        if ii != 0:
+                            ax.set_ylabel('')
+                        else:
+                            ax.set_ylabel(f"{self.pbcm.plotting_physio_labels_short[physio_var]} [%]")
+
+                        yticklabels = [f"{tick:.1f}" for tick in ax.get_yticks()]
+                        ax.set_yticklabels(yticklabels)
+
+            for ax, phase in zip(axes[0, :], phases):
+                ax.text(
+                    0.5, 1.05, phase.capitalize(),
+                    ha='center', va='bottom',
+                    fontsize=self.plotting_params.get('font.size'),
+                    fontweight='bold',
+                    transform=ax.transAxes)
+
+            for ax in axes[-1, :]:
+                ax.set_xlabel(cfg['xlabel'])
+                ax.set_xticklabels(list(label_mapping.values()), rotation=45)
+
+            if save:
+                self.save_fig(fig, filename_prefix, extension='svg')
+                self.save_fig(fig, filename_prefix, extension='png')
+
+            return fig, axes
