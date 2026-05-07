@@ -75,6 +75,18 @@ HR_WEIGHTS = np.arange(6)
 # ---- biometrics ------------------------------------------------------------
 BIOMETRICS = ["RHR", "HRV", "RR", "skin_temp", "blood_oxygen"]
 
+# ---- GAM (notebook 03) -----------------------------------------------------
+GAM_AGES = np.arange(18, 51)
+GAM_CLS = np.arange(21, 36)
+GAM_ADDITIONAL_COVARIATES = [
+    'eTRIMP', 'c_eTRIMP',
+    'wo_time_cos', 'wo_time_sin',
+    'sleep_dur', 'c_sleep_dur',
+    'sl_onset_cos', 'sl_onset_sin',
+    'BMI', 'cos_season',
+    'sin_season', 'weekend',
+]
+
 # ---- figure styling --------------------------------------------------------
 FIGURE_DPI = 500
 HEATMAP_FORMATS = ("png",)         # heatmaps: PNG only (SVG too large)

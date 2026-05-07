@@ -86,6 +86,9 @@ class PhysioMethods(CycleBehavMethods):
         self.gam_CLs = np.arange(21, 36)
         self.gam_vars = ['d', 'cl', 'age']
         self.gam_min_max_table = None
+        self.gam_additional_covariates = []
+        self.gam_data = None
+        self.gam_models_metrics = None
 
         self._c_window = 21
         self._c2_window = self._c_window * 3
@@ -432,6 +435,376 @@ class PhysioMethods(CycleBehavMethods):
                 self.add_column_reference_table(_col(typ, biometric))
 
         self.filter_data = prev_filter
+
+    # GAM methods
+    def gam_cycle_model_bam_full(self, gam_data, y_var, ar_lags=None,
+                                 additional_covariates=None,
+                                 use_parallel=False, n_cores=2, rho=0.3,
+                                 verbose=False):
+        """
+        Fit BAM model with correlation structure - simplified for scientific work
+        """
+        try:
+            from rpy2.robjects.packages import importr
+            import rpy2.robjects as ro
+            from rpy2.robjects import default_converter, pandas2ri, numpy2ri
+            from rpy2.robjects.conversion import localconverter
+
+
+            # pandas2ri.activate()
+            # numpy2ri.activate()
+
+            with localconverter(default_converter + pandas2ri.converter + numpy2ri.converter):
+                mgcv = importr('mgcv')
+                base = importr('base')
+                stats = importr('stats')
+        except Exception as e:
+            raise ImportError(f"R packages not available: {e}")
+
+        # Handle inputs
+        if ar_lags is None or ar_lags == 0:
+            ar_lags = []
+        elif isinstance(ar_lags, int) and ar_lags > 0:
+            ar_lags = list(range(1, ar_lags + 1))
+
+        if additional_covariates is None:
+            additional_covariates = []
+        elif isinstance(additional_covariates, str):
+            additional_covariates = [additional_covariates]
+
+        # Prepare data - critical for correlation structure
+        gam_data_work = gam_data.copy()
+
+        # Create a unique identifier for each subject-cycle combination
+        gam_data_work['subject_cycle'] = gam_data_work['n_id'].astype(str) + '_' + gam_data_work['cl'].astype(str)
+
+        # Sort by subject-cycle and then by day - ESSENTIAL for AR correlation
+        gam_data_work = gam_data_work.sort_values(['subject_cycle', 'd']).reset_index(drop=True)
+
+        # Create lag variables if needed
+        for lag in ar_lags:
+            lag_col = f'{y_var}_lag{lag}'
+            gam_data_work[lag_col] = gam_data_work.groupby(['subject_cycle'])[y_var].shift(lag)
+
+        lag_cols = [f'{y_var}_lag{lag}' for lag in ar_lags]
+
+        # Define columns and clean data
+        required_cols = ['d', 'cl', 'age', y_var, 'subject_cycle']
+        all_cols = required_cols + lag_cols + additional_covariates
+
+        # Remove missing values and re-sort
+        clean_subset = [y_var] + lag_cols + additional_covariates
+        gam_data_clean = gam_data_work.dropna(subset=clean_subset)
+        gam_data_clean = gam_data_clean.sort_values(['subject_cycle', 'd']).reset_index(drop=True)
+
+        # Create AR_start logical vector - TRUE at first observation of each subject-cycle
+        # This marks where each independent AR1 section begins
+        gam_data_clean['AR_start'] = ~gam_data_clean['subject_cycle'].duplicated()
+
+        # Convert logical to R logical vector
+        ar_start_logical = ro.BoolVector(gam_data_clean['AR_start'].values)
+
+        if verbose:
+            print(f"Fitting BAM on {len(gam_data_clean)} observations")
+            print(f"From {gam_data_clean['n_id'].nunique()} subjects")
+            print(f"Across {gam_data_clean['subject_cycle'].nunique()} subject-cycle combinations")
+            print(f"AR sections: {gam_data_clean['AR_start'].sum()}")
+
+        model_metrics = {
+        'n_obs': len(gam_data_clean),
+        'n_subjects': gam_data_clean['n_id'].nunique(),
+        'n_cycles': gam_data_clean['subject_cycle'].nunique(),
+        'ar_sections': gam_data_clean['AR_start'].sum()
+        }
+
+        # Convert to R
+        with localconverter(pandas2ri.converter):
+            r_data = pandas2ri.py2rpy(gam_data_clean[all_cols])
+
+        # Build formula
+        formula_parts = [
+            "s(d, k=7, bs='cr')",
+            "s(cl, k=4, bs='cr')",
+            "s(age, k=4, bs='cr')",
+            "ti(d, cl, k=c(6,4), bs=c('cr','cr'))",
+            "ti(d, age, k=c(6,4), bs=c('cr','cr'))",
+            "ti(d, cl, age, k=c(6,4,4), bs=c('cr','cr','cr'))"
+        ]
+
+        # Add lag terms if present
+        for lag_col in lag_cols:
+            formula_parts.append(f"s({lag_col}, k=4, bs='cr')")
+            formula_parts.append(f"ti(d, {lag_col}, k=c(6,4), bs=c('cr','cr'))")
+
+        # Add extra covariates
+        for covar in additional_covariates:
+            formula_parts.append(f"s({covar}, k=4, bs='cr')")
+            formula_parts.append(f"ti(d, {covar}, k=c(6,4), bs=c('cr','cr'))")
+
+        # Specific interactions
+        if 'sleep_dur' in additional_covariates and 'eTRIMP' in additional_covariates:
+            formula_parts.append("ti(sleep_dur, eTRIMP, k=c(4,4), bs=c('cr','cr'))")
+            formula_parts.append("ti(d, sleep_dur, eTRIMP, k=c(6,4,4), bs=c('cr','cr','cr'))")
+            formula_parts.append("ti(d, sleep_dur, eTRIMP, cl, k=c(6,4,4,4), bs=c('cr','cr','cr', 'cr'))")
+
+        if 'sleep_dur' in additional_covariates and 'c_sleep_dur' in additional_covariates:
+            formula_parts.append("ti(sleep_dur, c_sleep_dur, k=c(4,4), bs=c('cr','cr'))")
+            formula_parts.append("ti(d, sleep_dur, c_sleep_dur, k=c(6,4,4), bs=c('cr','cr','cr'))")
+            formula_parts.append("ti(d, sleep_dur, c_sleep_dur, cl, k=c(6,4,4,4), bs=c('cr','cr','cr', 'cr'))")
+
+        if 'eTRIMP' in additional_covariates and 'c_eTRIMP' in additional_covariates:
+            formula_parts.append("ti(eTRIMP, c_eTRIMP, k=c(4,4), bs=c('cr','cr'))")
+            formula_parts.append("ti(d, eTRIMP, c_eTRIMP, k=c(6,4,4), bs=c('cr','cr','cr'))")
+            formula_parts.append("ti(d, eTRIMP, c_eTRIMP, cl, k=c(6,4,4,4), bs=c('cr','cr','cr', 'cr'))")
+
+        formula_str = f"{y_var} ~ " + " + ".join(formula_parts)
+
+        with localconverter(default_converter):
+            formula = ro.r(formula_str)
+
+        if verbose:
+            print(f"Formula: {formula_str}")
+
+        # Fit with correlation structure
+        if verbose:
+            print("Fitting with AR(1) correlation structure...")
+
+        if use_parallel:
+            bam_model = mgcv.bam(
+                formula,
+                data=r_data,
+                method="fREML",
+                discrete=True,
+                nthreads=n_cores,
+                AR_start=ar_start_logical,
+                rho=rho,
+                select=True,
+            )
+        else:
+            bam_model = mgcv.bam(
+                formula,
+                data=r_data,
+                method="fREML",
+                discrete=True,
+                AR_start=ar_start_logical,
+                rho=rho,
+                select=True
+            )
+
+        if verbose:
+            print("BAM model fitting completed successfully")
+
+        # Basic stats
+        try:
+            edf_sum = base.sum(bam_model.rx2('edf'))[0]
+            aic_val = stats.AIC(bam_model)[0]
+            dev_expl = base.summary(bam_model).rx2('dev.expl')[0] * 100
+            if verbose:
+                print(f"Effective degrees of freedom: {edf_sum:.2f}")
+                print(f"AIC: {aic_val:.2f}")
+                print(f"Deviance explained: {dev_expl:.1f}%")
+            model_metrics['edf'] = edf_sum
+            model_metrics['D2'] = dev_expl
+        except:
+            print("Model fitted but couldn't extract all statistics")
+
+        return bam_model, model_metrics
+
+    def predict_bam_chunked_ci(self, bam_model, new_data, chunk_size=100000, alpha=0.05, se_fit=True, unconditional=True):
+        """
+        Make predictions using BAM model with optional confidence intervals
+        """
+
+        try:
+            from rpy2.robjects.packages import importr
+            import rpy2.robjects as ro
+            from rpy2.robjects import default_converter, pandas2ri, numpy2ri
+            from rpy2.robjects.conversion import localconverter
+
+
+            # pandas2ri.activate()
+            # numpy2ri.activate()
+
+            with localconverter(default_converter + pandas2ri.converter + numpy2ri.converter):
+                mgcv = importr('mgcv')
+                stats = importr('stats')
+
+        except Exception as e:
+            raise ImportError(f"R packages not available: {e}")
+
+        total_rows = len(new_data)
+
+        all_predictions = []
+        all_se = []
+        print(f"Making predictions with CI for {total_rows} observations")
+
+        for start_idx in range(0, total_rows, chunk_size):
+            end_idx = min(start_idx + chunk_size, total_rows)
+            chunk_data = new_data.iloc[start_idx:end_idx]
+
+            with localconverter(pandas2ri.converter):
+                r_chunk = pandas2ri.py2rpy(chunk_data)
+
+            with localconverter(default_converter):
+                pred_result = mgcv.predict_bam(bam_model, newdata=r_chunk,
+                                            se_fit=se_fit, unconditional=unconditional)
+
+            if se_fit:
+
+                with localconverter(default_converter + numpy2ri.converter + pandas2ri.converter):
+                    pred_result_np = pred_result.rx2('fit')
+                    pred_result_se_fit_np = pred_result.rx2('se.fit')
+
+                all_predictions.extend(np.array(pred_result_np))
+                all_se.extend(np.array(pred_result_se_fit_np))
+            else:
+                all_predictions = pred_result
+                all_se = np.nan * np.zeros_like(all_predictions)
+
+            if (start_idx // chunk_size + 1) % 10 == 0:
+                print(f"Processed {end_idx}/{total_rows} predictions")
+
+        predictions = np.array(all_predictions)
+        standard_errors = np.array(all_se)
+
+        # Get appropriate critical value
+        try:
+            with localconverter(default_converter):
+                df_residual = bam_model.rx2('df.residual')[0]
+                t_value = stats.qt(1 - alpha/2, df_residual)[0]
+        except:
+            t_value = stats.qnorm(1 - alpha/2)[0]
+
+        margin_error = t_value * standard_errors
+
+        return pd.DataFrame({
+            'predictions': predictions,
+            'se': standard_errors,
+            'lower': predictions - margin_error,
+            'upper': predictions + margin_error
+        })
+
+    def summary_bam(self, bam_model):
+        """
+        Get comprehensive model summary from BAM
+        """
+        from rpy2.robjects.packages import importr
+        from rpy2.robjects import default_converter, pandas2ri, numpy2ri
+        from rpy2.robjects.conversion import localconverter
+
+        with localconverter(default_converter + pandas2ri.converter + numpy2ri.converter):
+            base = importr('base')
+            mgcv = importr('mgcv')
+            stats = importr('stats')
+
+        print("BAM Model Summary:")
+        print("==================")
+
+        try:
+            # Print summary
+            summary_obj = base.summary(bam_model)
+            print(summary_obj)
+
+            # Extract key statistics
+            try:
+                aic = stats.AIC(bam_model)[0]
+            except:
+                aic = bam_model.rx2('aic')[0]
+
+            edf_vals = bam_model.rx2('edf')
+            edf_sum = base.sum(edf_vals)[0]
+            deviance_explained = summary_obj.rx2('dev.expl')[0] * 100
+
+            print(f"\nKey Statistics:")
+            print(f"AIC: {aic:.2f}")
+            print(f"Total EDF: {edf_sum:.2f}")
+            print(f"Deviance explained: {deviance_explained:.1f}%")
+
+            # Get individual term EDFs if available
+            try:
+                term_names = list(summary_obj.rx2('s.table').rownames)
+                print(f"\nSmooth Term EDFs:")
+                for i, (name, edf) in enumerate(zip(term_names, edf_vals)):
+                    if i < len(term_names):
+                        print(f"  {name}: {edf:.2f}")
+            except Exception as e:
+                print(f"Could not extract term names: {e}")
+
+        except Exception as e:
+            print(f"Error getting detailed summary: {e}")
+            try:
+                print(base.summary(bam_model))
+            except Exception as e2:
+                print(f"Could not generate any summary: {e2}")
+                try:
+                    print(f"Model fitted successfully")
+                    print(f"Formula: {bam_model.rx2('formula')}")
+                except:
+                    print("BAM model object exists but summary unavailable")
+
+    def prep_data_gam_cycle_model(self, prefix, additional_covariates=None):
+        """ Prepares data for GAM cycle model.
+        """
+        # if max_lag is None:
+        #     max_lag = 3
+        # elif max_lag < 0:
+        #     raise ValueError("max_lag must be a non-negative integer")
+        _min_day = -10
+        _max_day = 35
+        min_day = _min_day# - max_lag
+        max_day = _max_day
+
+        t = self.reference_table.copy(deep=True)
+        data_cols = [f"{prefix}_{vv}" for vv in self.CORE_BIOMETRICS]
+        if additional_covariates is not None:
+            if isinstance(additional_covariates, str):
+                additional_covariates = [additional_covariates]
+            data_cols += additional_covariates
+
+        if 'eTRIMP' in data_cols: # shift eTRIMP to previous day to align with physiological data
+            t['eTRIMP'] = t.groupby("n_id")['eTRIMP'].shift(1)
+
+
+        gam_data = t[(t.cycle_day <= max_day) & (t.cycle_day >= min_day) & (t.length >= self.MIN_MEDIAN_CL) & (t.length <= self.MAX_MEDIAN_CL)].groupby(["n_id", "length", 'cycle_day'])[data_cols].mean().reset_index()
+
+        gam_data['age'] = gam_data.n_id.map(self.tables['user'].age)
+
+        gam_data.rename(columns={'length': 'cl', 'cycle_day': 'd'}, inplace=True)
+
+        self.gam_data = gam_data
+        return gam_data
+
+    def fit_gam_models(self, prefix='pct', additional_covariates=None, overwrite=False):
+        """ Fits GAM models for core biometrics.
+        """
+
+        biometrics = [f"{prefix}_{vv}" for vv in self.CORE_BIOMETRICS]
+        if self.gam_models is not None:
+            if not overwrite and all(b in self.gam_models for b in biometrics):
+                print("GAM models already fitted")
+                return
+        else:
+            self.gam_models = {}
+            self.gam_models_metrics = pd.DataFrame(columns=['n_obs', 'n_subjects', 'n_subject_cycles', 'D2', 'edf'])
+            self.gam_additional_covariates = additional_covariates if additional_covariates is not None else []
+
+        gam_data= self.prep_data_gam_cycle_model(prefix=prefix, additional_covariates=additional_covariates)
+
+        if gam_data.empty:
+            print("No data available for GAM model")
+            return
+
+        for y_var in biometrics:
+
+            print("\n--------------------------------------------------\n")
+            print(f"Fitting GAM model for {y_var}...")
+            self.gam_models[y_var], self.gam_models_metrics.loc[y_var] = self.gam_cycle_model_bam_full(gam_data, y_var=y_var, additional_covariates=additional_covariates, use_parallel=False, rho=0.3)
+
+            d2 = self.gam_models_metrics.loc[y_var, 'D2']
+            edf = self.gam_models_metrics.loc[y_var, 'edf']
+            print(f"Model for {y_var} fitted successfully.")
+            print(f"Model metrics for {y_var}: D2={d2:0.2f}, edf={edf:0.2f}")
+            print("\n--------------------------------------------------\n")
 
 
 # ---------------------------------------------------------------------------
