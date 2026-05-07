@@ -780,3 +780,178 @@ class PhysioBehavChangeMethods(PhysioMethods):
                             bbox_inches='tight', dpi=self.PLOT_DPI)
 
             return fig, axes
+
+    # =========================================================================
+    # Phase E-2: per-phase biometric × behavior-change plots
+    # =========================================================================
+
+    def add_acr_labels_to_rt(self):
+        """Add behavior change labels to the reference table."""
+        rt = self.reference_table
+        rtg = rt.groupby(['n_id', 'j_cycle_num', 'phase'])
+
+        for behav in self.behav_change_variables:
+            cfg = self.behav_configs[behav]
+
+            chronic_var = cfg['chronic_var']
+            chronic_range = cfg['chronic_range']
+            group_bins = cfg['group_bins']
+
+            binned_acr = pd.cut(
+                rtg[behav].last(),
+                bins=group_bins,
+                include_lowest=True,
+                labels=list(cfg['label_mapping'].keys())
+            )
+            chronic_vals = rtg[chronic_var].first()
+
+            if chronic_range is not None:
+                binned_acr[(chronic_vals < chronic_range[0]) | (chronic_vals > chronic_range[1])] = np.nan
+
+            unstacked_binned_acr = binned_acr.unstack()
+
+            for phase in self.phases:
+                rt[f'{behav}_bin_groups_{phase}'] = unstacked_binned_acr[phase].reindex(rt.set_index(['n_id', 'j_cycle_num']).index).values
+
+    def plot_physio_behav_change_phase_single_val(self, data, physio_var, ax=None, color='k',
+                                                  add_phase_segment=False, legend=False, phase=None,
+                                                  phase_color=None, **legend_kwargs):
+        """Auxiliary: plot physiological variable response for a single behavior-change group."""
+        if ax is None:
+            f, ax = plt.subplots(figsize=(5, 3))
+            setup_axes(ax)
+
+        sns.lineplot(data=data, x='cycle_day', y=physio_var, color=color,
+                     ax=ax, err_kws={'lw': 0})
+
+        ax.set_xlabel("Cycle Day")
+        if physio_var in self.plotting_physio_labels_units:
+            ax.set_ylabel(self.plotting_physio_labels_units[physio_var])
+        elif physio_var in self.plotting_physio_labels:
+            ax.set_ylabel(self.plotting_physio_labels[physio_var])
+
+        if legend:
+            pass  # add_legend helper not ported; not used by Fig 4b
+        else:
+            if ax.get_legend():
+                ax.legend().remove()
+
+        if add_phase_segment and phase is not None:
+            self._add_phase_segment(ax, phase=phase, alpha=0.1, phase_color=phase_color)
+
+        ax.set_xticks(np.arange(-14, 22, 7))
+
+        return ax
+
+    def plot_physio_behav_change_by_phase(self, behav_var='acr_sleep_dur', physio_var='RHR',
+                                          physio_prefix='pct', d_range=None, add_phase_title=False,
+                                          figure_label=None, save=False, filename_prefix=None,
+                                          phase_colors=None, fig=None, axes=None):
+        """Plot physiological response to behavior changes across cycle phases (Fig 4b)."""
+        if phase_colors is None:
+            phase_colors = {
+                'premenstrual': "#FFC861",
+                'menstrual': "#FFC861",
+                'postmenstrual': "#FFC861"
+            }
+
+        if d_range is None:
+            d_range = np.arange(-15, 22)
+
+        if f'{behav_var}_bin_groups_{self.phases[0]}' not in self.reference_table.columns:
+            self.add_acr_labels_to_rt()
+
+        rt = self.reference_table
+        yd = rt[(rt['cycle_day'] >= d_range[0]) & (rt['cycle_day'] <= d_range[-1])]
+
+        physio_var_full = f'{physio_prefix}_{physio_var}'
+        change_vals = ['large_decrease', 'decrease', 'no_change', 'increase', 'large_increase']
+
+        ylim_config = {
+            'pct_RHR': {'ylim': [-5.7, 5.7], 'yticks': [-5, 0, 5]},
+            'pct_RR': {'ylim': [-2, 2], 'yticks': [-2, 0, 2]},
+            'pct_skin_temp': {'ylim': [-1, 1], 'yticks': [-1, 0, 1]},
+            'pct_HRV': {'ylim': [-15, 15], 'yticks': [-15, 0, 15]},
+            'pct_blood_oxygen': {'ylim': [-0.5, 0.5], 'yticks': [-0.5, 0, 0.5]}
+        }
+
+        with plt.rc_context(rc=self.plotting_params):
+            if fig is None:
+                fig = plt.figure(figsize=(6, 1.2), dpi=self.plotting_params.get('figure.dpi'))
+
+                x0 = 0.07
+                wspace = 0.03
+                width = (1 - x0 - 2 * wspace) / 3
+                y0 = 0.15
+                height = 0.8
+                axes = [
+                    fig.add_axes([x0, y0, width, height]),
+                    fig.add_axes([x0 + width + wspace, y0, width, height]),
+                    fig.add_axes([x0 + 2 * width + 2 * wspace, y0, width, height]),
+                ]
+            else:
+                assert axes is not None, "If 'fig' is provided, 'axes' must also be provided."
+                assert len(axes) == len(self.phases), "Number of axes must match number of phases."
+
+            for ii, ax in enumerate(axes):
+                setup_axes(ax)
+                phase = self.phases[ii]
+                hue_var = f'{behav_var}_bin_groups_{phase}'
+
+                for kk, change_val in enumerate(change_vals):
+                    d = yd[yd[hue_var] == change_val]
+                    if len(d) > 0:
+                        self.plot_physio_behav_change_phase_single_val(
+                            data=d,
+                            physio_var=physio_var_full,
+                            ax=ax,
+                            color=self.change_colors[change_val],
+                            legend=False,
+                            add_phase_segment=False,
+                            phase=phase
+                        )
+
+                        if hasattr(self, 'phase_days') and phase in self.phase_days:
+                            day = self.phase_days[phase][1]
+                            val = d.loc[d['cycle_day'] == day, physio_var_full].mean()
+                            if not np.isnan(val):
+                                ax.scatter(day, val, color=self.change_colors[change_val],
+                                           marker='o', s=20, zorder=10)
+
+                self._add_phase_segment(ax, phase=phase, alpha=0.1, phase_color=phase_colors[phase])
+
+                if physio_var_full in ylim_config:
+                    ax.set_ylim(ylim_config[physio_var_full]['ylim'])
+                    ax.set_yticks(ylim_config[physio_var_full]['yticks'])
+
+                if ii != 0:
+                    ax.set_yticklabels([])
+                    ax.set_ylabel('')
+                else:
+                    yticklabels = [f"{tick:.1f}" for tick in ax.get_yticks()]
+                    ax.set_yticklabels(yticklabels)
+                    ax.set_ylabel(f"{self.plotting_physio_labels_short[physio_var]} [%]")
+
+                if add_phase_title:
+                    ax.text(
+                        0.5, 1.05, phase.capitalize(),
+                        ha='center', va='bottom',
+                        fontsize=self.plotting_params.get('font.size') * 1.1,
+                        fontweight='bold',
+                        transform=ax.transAxes
+                    )
+
+                for gridline in ax.get_xgridlines():
+                    if not np.isclose(gridline.get_xdata()[0], 0):
+                        gridline.set_visible(False)
+                    else:
+                        gridline.set_linewidth(1.1)
+
+            if figure_label is not None:
+                label_size = self.plotting_params.get('font.size')
+                label_weight = 'bold'
+                fig.text(0, 1, figure_label, ha="left", va="top",
+                         fontsize=label_size, fontweight=label_weight,
+                         transform=fig.transFigure)
+
+        return fig, axes
