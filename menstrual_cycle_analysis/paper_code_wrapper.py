@@ -737,10 +737,6 @@ class CycleLengthAnalyses:
         ax.grid(axis='x', lw=0)
 
     # =================== Supplemental S2/S4/S1 ===================
-    def cl_x_BMI_stats(self):
-        """Calculate statistics for cycle length vs BMI relationships."""
-        pass
-
     def cl_sd_x_age_plot(self):
         """Generate cycle length standard deviation vs age plot."""
 
@@ -953,17 +949,6 @@ class CycleLengthAnalyses:
         """Wrapper around StatisticalPredictionHandler for conditional predictions."""
         handler = StatisticalPredictionHandler(fitted_model, data)
         return handler.get_conditional_predictions(eval_term, eval_vals, alpha)
-
-    def _add_axes_labels(self, ax, labels, x_offset=0, y_offset=0):
-        label_size = self.plotting_params.get('figure.labelsize')
-        label_weight = self.plotting_params.get('figure.labelweight')
-
-        for a, l in zip(ax, labels):
-            a.annotate(l, xy=(0, 1), xytext=(x_offset, y_offset),
-                       ha='right', va='bottom',
-                       xycoords='axes fraction',
-                       textcoords='offset points',
-                       fontsize=label_size, fontweight=label_weight)
 
     def _group_by_behavior(self, data, group_var='sl_dur_bin', cycle_count_thr=1):
         """Group data by behavioral variables."""

@@ -468,10 +468,6 @@ class PhysioMethods(CycleBehavMethods):
             from rpy2.robjects import default_converter, pandas2ri, numpy2ri
             from rpy2.robjects.conversion import localconverter
 
-
-            # pandas2ri.activate()
-            # numpy2ri.activate()
-
             with localconverter(default_converter + pandas2ri.converter + numpy2ri.converter):
                 mgcv = importr('mgcv')
                 base = importr('base')
@@ -639,10 +635,6 @@ class PhysioMethods(CycleBehavMethods):
             from rpy2.robjects import default_converter, pandas2ri, numpy2ri
             from rpy2.robjects.conversion import localconverter
 
-
-            # pandas2ri.activate()
-            # numpy2ri.activate()
-
             with localconverter(default_converter + pandas2ri.converter + numpy2ri.converter):
                 mgcv = importr('mgcv')
                 stats = importr('stats')
@@ -702,75 +694,11 @@ class PhysioMethods(CycleBehavMethods):
             'upper': predictions + margin_error
         })
 
-    def summary_bam(self, bam_model):
-        """
-        Get comprehensive model summary from BAM
-        """
-        from rpy2.robjects.packages import importr
-        from rpy2.robjects import default_converter, pandas2ri, numpy2ri
-        from rpy2.robjects.conversion import localconverter
-
-        with localconverter(default_converter + pandas2ri.converter + numpy2ri.converter):
-            base = importr('base')
-            mgcv = importr('mgcv')
-            stats = importr('stats')
-
-        print("BAM Model Summary:")
-        print("==================")
-
-        try:
-            # Print summary
-            summary_obj = base.summary(bam_model)
-            print(summary_obj)
-
-            # Extract key statistics
-            try:
-                aic = stats.AIC(bam_model)[0]
-            except:
-                aic = bam_model.rx2('aic')[0]
-
-            edf_vals = bam_model.rx2('edf')
-            edf_sum = base.sum(edf_vals)[0]
-            deviance_explained = summary_obj.rx2('dev.expl')[0] * 100
-
-            print(f"\nKey Statistics:")
-            print(f"AIC: {aic:.2f}")
-            print(f"Total EDF: {edf_sum:.2f}")
-            print(f"Deviance explained: {deviance_explained:.1f}%")
-
-            # Get individual term EDFs if available
-            try:
-                term_names = list(summary_obj.rx2('s.table').rownames)
-                print(f"\nSmooth Term EDFs:")
-                for i, (name, edf) in enumerate(zip(term_names, edf_vals)):
-                    if i < len(term_names):
-                        print(f"  {name}: {edf:.2f}")
-            except Exception as e:
-                print(f"Could not extract term names: {e}")
-
-        except Exception as e:
-            print(f"Error getting detailed summary: {e}")
-            try:
-                print(base.summary(bam_model))
-            except Exception as e2:
-                print(f"Could not generate any summary: {e2}")
-                try:
-                    print(f"Model fitted successfully")
-                    print(f"Formula: {bam_model.rx2('formula')}")
-                except:
-                    print("BAM model object exists but summary unavailable")
-
     def prep_data_gam_cycle_model(self, prefix, additional_covariates=None):
         """ Prepares data for GAM cycle model.
         """
-        # if max_lag is None:
-        #     max_lag = 3
-        # elif max_lag < 0:
-        #     raise ValueError("max_lag must be a non-negative integer")
-        _min_day = -10
-        _max_day = 35
-        min_day = _min_day# - max_lag
-        max_day = _max_day
+        min_day = -10
+        max_day = 35
 
         t = self.reference_table.copy(deep=True)
         data_cols = [f"{prefix}_{vv}" for vv in self.CORE_BIOMETRICS]
@@ -904,7 +832,6 @@ class PhysioMethods(CycleBehavMethods):
         values = [np.asarray(var_grid_dict[k]) for k in keys]
         combos = list(itertools.product(*values))
         sim_data = pd.DataFrame(combos, columns=keys)
-        #return sim_data
 
         # Add fixed values if provided
         if fixed_vals_dict is not None:
@@ -919,9 +846,7 @@ class PhysioMethods(CycleBehavMethods):
         # filter out invalid days outside of cycle
         sim_data = sim_data[sim_data['d'] <= sim_data['cl']]
 
-        #return sim_data
         sim_data = self.get_gam_predictions(sim_data, se_fit=se_fit, biometrics=biometrics)
-        #self.gam_sim_data_results = sim_data
         return sim_data
 
     def _gen_gam_sim_data(self, ages=None, cycle_lengths=None, day_step=0.5, fixed_vals_dict=None):
@@ -1956,7 +1881,6 @@ class PhysioMethods(CycleBehavMethods):
             cbar_ax = fig.add_axes([1, 0.08, 0.03, 0.1])  # [left, bottom, width, height]
 
             # Create a ScalarMappable and colorbar
-            #from matplotlib.colors import Normalize
             norm = mpl.colors.Normalize(vmin=0, vmax=1)
             sm = mpl.cm.ScalarMappable(cmap='magma', norm=norm)
             sm.set_array([])
@@ -2090,12 +2014,9 @@ class PhysioMethods(CycleBehavMethods):
         if all(f"{prefix}{col}" in self.tables['user'].columns for col in cols):
             return
 
-        #biometric_avg = pd.DataFrame(index=self.users, columns=cols)
         for kk in cols:
             self.tables['user'][kk] = self.data.groupby("n_id")[kk].mean()
             self.tables['user'][kk + '_std'] = self.data.groupby("n_id")[kk].std()
-
-        #self.tables['user'] = pd.concat([self.tables['user'], biometric_avg], axis=1)
 
     # Plotting Routines
     def plot_user_level_biometrics_vs_x(self, x_var='age_b', prefix=None, save_fig=False):
