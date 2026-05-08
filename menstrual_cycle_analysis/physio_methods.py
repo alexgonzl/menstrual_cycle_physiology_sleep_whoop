@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import statsmodels.formula.api as smf
 from scipy import signal
 from tqdm import tqdm
 
@@ -34,11 +35,13 @@ from ._plot_utils import (
     add_legend,
     draw_rectangle_gradient,
     fixed_yticks,
+    get_variable_weights,
     setup_axes,
     single_var_point_plot,
 )
 from .cl_behav_methods import CycleBehavMethods
 from .stats.circular import circmean_day, circvar_day
+from .stats.contrasts import StatisticalPredictionHandler as SPH
 
 
 class PhysioMethods(CycleBehavMethods):
@@ -1791,6 +1794,185 @@ class PhysioMethods(CycleBehavMethods):
             zero_loc = zero_loc[0][0]
 
         return zero_loc
+
+    def model_biom_delta_x_cl_age(self, prefix='pct'):
+        all_sleep_terms = ['sl_onset_cos', 'sl_onset_sin', 'sl_onset_var',
+                           'sl_dur_mean', 'sl_dur_mean2', 'sl_dur_lvar', 'sl_dur_lvar2']
+        all_wo_terms = ['wo_time_cos', 'wo_time_sin',
+                        'total_wo_duration', 'norm_intensity', 'eTRIMP', 'eTRIMP2']
+        seasonal_terms = ['cos_season', 'sin_season']
+
+        rt = self.reference_table
+        rt = rt[rt.cycle_day >= 0]
+
+        cycle_table = self.tables['cycle'].copy(deep=True)
+        bins = np.concatenate(([self.MIN_CL], self.CL_bin_edges, [self.MAX_CL]))
+        get_variable_weights(cycle_table, var='cycle_length', bins=bins)
+
+        cl_x_age_delta_dict = {}
+        self.biometric_mag_delta_models = {}
+        for biom in self.CORE_BIOMETRICS:
+            vv = f"{prefix}_{biom}"
+            desc = rt.groupby(['n_id', 'j_cycle_num'], observed=True)[vv].agg(['max', 'min'])
+            desc['delta'] = desc['max'] - desc['min']
+            cycle_table[f'delta_{vv}'] = desc['delta']
+
+            all_terms = seasonal_terms + all_sleep_terms + all_wo_terms + [f'delta_{vv}', 'cycle_length_weight', 'age', 'BMI']
+            cycle_table = cycle_table.dropna(subset=all_terms)
+
+            m = smf.gee(data=cycle_table.reset_index(), formula=f'delta_{vv} ~ age*cycle_length + BMI + BMI2 + ' + ' + '.join( seasonal_terms + all_sleep_terms + all_wo_terms), groups='n_id', weights=cycle_table['cycle_length_weight']).fit()
+
+            sph = SPH(m, cycle_table.reset_index())
+            self.biometric_mag_delta_models[vv] = sph
+
+            out = pd.DataFrame()
+            for cl in self.CL_bins:
+                temp = sph.get_conditional_predictions(eval_term='age', eval_vals=self.age_bin_centers, fixed_values=dict(cycle_length=cl))
+                temp['cl'] = cl
+                out = pd.concat([out, temp])
+
+            cl_x_age_delta_dict[vv] = out.pivot_table(values='pred', index='age', columns='cl').T
+
+        return cl_x_age_delta_dict
+
+    def gam_biom_delta_x_cl_age(self, prefix='pct'):
+        gam_sim_data = self.get_gam_sim_data_for_vars(var_grid_dict={'d': np.arange(0,35),
+                                                                     'age': self.age_bin_centers, 'cl': self.CL_bins})
+        gam_sim_data = gam_sim_data[gam_sim_data.d <= gam_sim_data.cl]
+
+        gam_biom_delta_x_cl_age_dict = {}
+        for biom in self.CORE_BIOMETRICS:
+            col = f"{prefix}_{biom}_pred"
+            max_vals = gam_sim_data.groupby(['age', 'cl'])[col].max().unstack().T
+            min_vals = gam_sim_data.groupby(['age', 'cl'])[col].min().unstack().T
+            delta_vals = max_vals - min_vals
+            gam_biom_delta_x_cl_age_dict[f"{prefix}_{biom}"] = delta_vals
+
+        return gam_biom_delta_x_cl_age_dict
+
+    def _annotate_min_max(self, ax, delta_vals, fontsize=None, max_color='black',
+                          min_color='white'):
+        # Find min and max positions
+        min_pos = np.unravel_index(np.argmin(delta_vals.values), delta_vals.shape)
+        max_pos = np.unravel_index(np.argmax(delta_vals.values), delta_vals.shape)
+
+        # Annotate min and max
+        min_val = delta_vals.values[min_pos]
+        max_val = delta_vals.values[max_pos]
+        mean_val = delta_vals.values.mean()
+        ax.text(
+            min_pos[1] + 0.5, min_pos[0] + 0.5, f"{min_val:.2g}",
+            ha='center', va='center',
+            color=min_color, fontsize=fontsize
+        )
+        ax.text(
+            max_pos[1] + 0.5, max_pos[0] + 0.5, f"{max_val:.2g}",
+            ha='center', va='center',
+            color=max_color, fontsize=fontsize
+        )
+
+    def plot_max_min_biometric_cycle_age_cl_variation_gam(self, prefix='pct', gam_results=None, within_cycle_results=None):
+        biometrics = self.CORE_BIOMETRICS
+
+        if gam_results is None:
+            gam_results = self.gam_biom_delta_x_cl_age(prefix=prefix)
+        if within_cycle_results is None:
+            within_cycle_results = self.model_biom_delta_x_cl_age(prefix=prefix)
+
+        fig, axes = plt.subplots(len(biometrics), 2, figsize=(6, 7),
+                                 dpi=self.plotting_params['figure.dpi'],
+                                 constrained_layout=True)
+
+        with plt.rc_context(rc=self.plotting_params):
+            for i, biometric in enumerate(biometrics):
+
+                aa = gam_results[f"{prefix}_{biometric}"]
+                ax0, ax1 = axes[i, 0], axes[i, 1]
+                sns.heatmap(aa, cmap="magma", lw=1, ax=ax0,
+                            cbar=False, robust=True)
+                ax0.invert_yaxis()  # Invert y-axis to have cycle length at the top
+                self._annotate_min_max(ax0, aa, fontsize=self.plotting_params.get('legend.fontsize'))
+
+                bb = within_cycle_results[f"{prefix}_{biometric}"]
+                sns.heatmap(bb, cmap="magma", lw=1, ax=ax1, cbar=False, robust=True)
+                ax1.invert_yaxis()  # Invert y-axis to have cycle length at the top
+                self._annotate_min_max(ax1, bb, fontsize=self.plotting_params.get('legend.fontsize'))
+
+                ax0.set_xticks(np.arange(len(self.age_bin_centers))+0.5)
+                ax0.set_xticklabels(self.age_bin_centers)
+
+                ax1.set_xticks(np.arange(len(self.age_bin_centers))+0.5)
+                ax1.set_xticklabels(self.age_bin_centers)
+
+                ax0.set_yticks(np.arange(len(self.CL_bins))+0.5)
+                ax0.set_yticklabels(np.array(self.CL_bins).astype(int), rotation=0)
+
+                ax1.set_yticklabels([])
+                ax1.set_ylabel('')
+
+                # Add y-axis label as a row label for each biometric
+                ax0.annotate(
+                    self.plotting_physio_labels_short[biometric],
+                    xy=(0, 0.5),
+                    xycoords='axes fraction',
+                    xytext=(-30, 0),
+                    textcoords='offset points',
+                    ha='right',
+                    va='center',
+                    fontsize=self.plotting_params.get('axes.labelsize'),
+                    rotation=90
+                )
+
+                if i == 0:
+                    ax0.set_title(f"Simulated GAM Waveform\nMax-Min [%]")
+                    ax1.set_title(f"Within-Cycle Modeled \nMax-Min [%]")
+
+                # Suppress shared yticks and xticks except for leftmost and bottom plots
+                if i != len(biometrics) - 1:
+                    ax0.set_xticklabels([])
+                    ax1.set_xticklabels([])
+                    ax0.set_xlabel('')
+                    ax1.set_xlabel('')
+
+                ax0.set_ylabel('Cycle Length')
+
+                if i == (len(biometrics) - 1):
+                    ax0.set_xlabel('Age')
+                    ax1.set_xlabel('Age')
+
+                ax0.tick_params(axis='both', length=0.05)
+                ax1.tick_params(axis='both', length=0.05)
+
+            label_size = self.plotting_params.get('font.size')
+            label_weight = 'bold'
+            fig.text(0.01, 0.96, 'a.', ha="left", va="bottom",
+                     fontsize=label_size, fontweight=label_weight, transform=fig.transFigure)
+            fig.text(0.55, 0.96, 'b.', ha="left", va="bottom", fontsize=label_size,
+                fontweight=label_weight, transform=fig.transFigure)
+
+            # Add a colorbar legend for 'magma' colormap in the lower right corner
+
+            # Create a new independent axis for the colorbar
+            cbar_ax = fig.add_axes([1, 0.08, 0.03, 0.1])  # [left, bottom, width, height]
+
+            # Create a ScalarMappable and colorbar
+            #from matplotlib.colors import Normalize
+            norm = mpl.colors.Normalize(vmin=0, vmax=1)
+            sm = mpl.cm.ScalarMappable(cmap='magma', norm=norm)
+            sm.set_array([])
+
+            cbar = fig.colorbar(sm, cax=cbar_ax)
+            cbar.outline.set_visible(False)
+            cbar.set_ticks([])
+            #cbar.set_ticklabels(['min', 'max'])
+            #cbar.ax.tick_params(labelsize=self.plotting_params.get('legend.fontsize', 10),
+            #                                length=1, pad=1)
+            fig.text(1.015, 0.183, 'max', fontsize=self.plotting_params.get('legend.fontsize'),
+                     ha='center', va='bottom', rotation=0)
+            fig.text(1.015, 0.077, 'min', fontsize=self.plotting_params.get('legend.fontsize'),
+                     ha='center', va='top', rotation=0)
+
+        return fig, axes
 
     def _add_user_level_biometrics(self, prefix=None):
         if prefix is None:

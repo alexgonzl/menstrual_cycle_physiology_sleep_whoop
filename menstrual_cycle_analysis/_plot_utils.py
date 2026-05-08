@@ -237,6 +237,40 @@ def single_var_point_plot(
     return ax
 
 
+def get_variable_weights(data, var, bins=None, labels=None):
+    """
+    Compute weights for a variable by binning and inverse log-count weighting.
+    Returns a DataFrame with the variable, bin, and weight.
+    """
+    # Bin the variable if bins are provided
+    if bins is not None:
+        binned = pd.cut(data[var], bins=bins, labels=labels, include_lowest=True)
+    else:
+        binned = data[var]
+
+    # Compute weights: inverse log of bin counts
+    bin_counts = binned.value_counts().sort_index()
+    weights = 1 / np.log(bin_counts.replace(0, np.nan))
+    weights = weights.replace([np.inf, -np.inf], 0).fillna(0)
+
+    # Assign weights to each row
+    weight_col = binned.map(weights)
+
+    min_val = bins[0] if bins is not None else None
+    max_val = bins[-1] if bins is not None else None
+    # Handle out-of-bounds if min_val/max_val provided
+    if min_val is not None and max_val is not None and bins is not None:
+        lowest_bin = binned.cat.categories[0]
+        highest_bin = binned.cat.categories[-1]
+        weight_low = weights.loc[lowest_bin] if lowest_bin in weights else 0
+        weight_high = weights.loc[highest_bin] if highest_bin in weights else 0
+        weight_col[data[var] < min_val] = weight_low
+        weight_col[data[var] > max_val] = weight_high
+
+    data[f"{var}_weight"] = weight_col
+    return data
+
+
 def cname2hex(cname):
     colors = dict(mpl.colors.BASE_COLORS, **mpl.colors.CSS4_COLORS) # dictionary. key: names, values: hex codes
     try:
