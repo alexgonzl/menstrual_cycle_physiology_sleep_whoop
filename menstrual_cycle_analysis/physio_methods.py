@@ -1576,6 +1576,222 @@ class PhysioMethods(CycleBehavMethods):
         l.get_frame().set_facecolor('0.97')
         l.get_frame().set_alpha(0.9)
 
+    def get_gam_critical_values_cwt(self, data, prefix='pct', window_w = 4):
+
+        pred_biometrics = [f"{prefix}_{vv}_pred" for vv in self.CORE_BIOMETRICS]
+
+        cycle_lengths = data.cl.unique()
+        ages = data.age.unique()
+        _c, _a = np.meshgrid(cycle_lengths, ages, indexing='ij')
+
+        out_ref = pd.DataFrame({
+            'cl': _c.ravel(),
+            'age': _a.ravel()
+        })
+
+        day_step = np.mean(np.diff(data['d'].sort_values().unique()))
+        sample_cwt_window = window_w / day_step
+
+        out_ref[['min_loc', 'min_val', 'max_loc', 'max_val', 'zero_loc', 'zero_val']] = np.nan
+        out_ref = out_ref.set_index(['cl', 'age'])
+
+        # invert HRV for consistency across min/max searches
+        HRV_idx = [i for i, v in enumerate(pred_biometrics) if 'HRV' in v][0]
+        HRV_column = pred_biometrics[HRV_idx]
+
+        data = data.copy(deep=True)
+        data[HRV_column] = -data[HRV_column]
+        data = data[data.d<= data.cl]
+
+        out = {kk: out_ref.copy(deep=True) for kk in self.CORE_BIOMETRICS}
+        for a in ages:
+            for c in cycle_lengths:
+                d_idx = (data.age == a) & (data.cl == c)
+                temp = data[d_idx]
+                for biom, vv in zip(self.CORE_BIOMETRICS, pred_biometrics):
+                    # min
+                    try:
+                        l_min = signal.find_peaks_cwt(-temp[vv], widths=np.arange(sample_cwt_window * 0.5, sample_cwt_window * 2, day_step))[0]
+                        out[biom].loc[(c, a), ['min_loc', 'min_val']] = temp.iloc[l_min][['d', vv]].values
+                    except:
+                        pass
+                    # max
+                    try:
+                        l_max = signal.find_peaks_cwt(temp[vv], widths=np.arange(sample_cwt_window * 0.5, sample_cwt_window * 2, day_step))[0]
+                        out[biom].loc[(c, a), ['max_loc', 'max_val']] = temp.iloc[l_max][['d', vv]].values
+                    except:
+                        pass
+                    # amplitude difference
+                    try:
+                        out[biom].loc[(c, a), ['amp_diff']] = out[biom].loc[(c, a), 'max_val'] - out[biom].loc[(c, a), 'min_val']
+                    except:
+                        pass
+
+                    try:
+                        zero_search_win = out[biom].loc[(c,a), ['min_loc', 'max_loc']].values
+                        temp_zero = temp[temp.d.between(*zero_search_win)]
+                        l_zero = self._get_zero_crossing(temp_zero[vv])
+                        if l_zero is not np.nan:
+                            out[biom].loc[(c, a), ['zero_loc', 'zero_val']] = temp_zero.iloc[l_zero][['d', vv]].values
+                        else:
+                            out[biom].loc[(c, a), ['zero_loc', 'zero_val']] = [np.nan, np.nan]
+                    except:
+                        pass
+
+        return out
+
+    def get_gam_critical_values_simple(self, data, prefix='pct'):
+        pred_biometrics = [f"{prefix}_{vv}_pred" for vv in self.CORE_BIOMETRICS]
+
+        cycle_lengths = data.cl.unique()
+        ages = data.age.unique()
+        _c, _a = np.meshgrid(cycle_lengths, ages, indexing='ij')
+
+        out_ref = pd.DataFrame({'cl': _c.ravel(), 'age': _a.ravel()})
+        out_ref[['min_loc', 'min_val', 'max_loc', 'max_val', 'zero_loc', 'zero_val']] = np.nan
+        out_ref = out_ref.set_index(['cl', 'age'])
+
+        # invert HRV for consistency across min/max searches
+        HRV_idx = [i for i, v in enumerate(pred_biometrics) if 'HRV' in v][0]
+        HRV_column = pred_biometrics[HRV_idx]
+
+        data = data.copy(deep=True)
+        data[HRV_column] = -data[HRV_column]
+        data = data[data.d <= data.cl]
+
+        out = {kk: out_ref.copy(deep=True) for kk in self.CORE_BIOMETRICS}
+        for a in ages:
+            for c in cycle_lengths:
+                d_idx = (data.age == a) & (data.cl == c)
+                temp = data[d_idx]
+                if len(temp) == 0:
+                    continue
+                for biom, vv in zip(self.CORE_BIOMETRICS, pred_biometrics):
+                    vals = temp[vv].values
+                    # min
+                    l_min = np.argmin(vals)
+                    out[biom].loc[(c, a), ['min_loc', 'min_val']] = temp.iloc[l_min][['d', vv]].values
+                    # max
+                    l_max = np.argmax(vals)
+                    out[biom].loc[(c, a), ['max_loc', 'max_val']] = temp.iloc[l_max][['d', vv]].values
+                    # amplitude difference
+                    out[biom].loc[(c, a), 'amp_diff'] = out[biom].loc[(c, a), 'max_val'] - out[biom].loc[(c, a), 'min_val']
+                    # zero crossing between min and max
+                    try:
+                        zero_search_win = out[biom].loc[(c, a), ['min_loc', 'max_loc']].values
+                        temp_zero = temp[temp.d.between(*zero_search_win)]
+                        l_zero = self._get_zero_crossing(temp_zero[vv])
+                        if l_zero is not np.nan:
+                            out[biom].loc[(c, a), ['zero_loc', 'zero_val']] = temp_zero.iloc[l_zero][['d', vv]].values
+                        else:
+                            out[biom].loc[(c, a), ['zero_loc', 'zero_val']] = [np.nan, np.nan]
+                    except:
+                        pass
+
+        return out
+
+    def plot_biometrics_critical_values_heatmaps2(self, critical_values_table):
+        min_levels = np.arange(2, 15.1, 1)
+        max_levels = np.arange(14, 30.1, 1)
+        zero_levels = np.arange(8, 22.1, 1)
+
+        fixed_age = 32
+        fixed_cl = 28
+
+        n_rows = len(critical_values_table)
+        keys = list(critical_values_table.keys())
+        n_cols = 3  # Only min, zero, max
+
+        with plt.rc_context(rc=self.plotting_params):
+            f, ax = plt.subplots(n_rows, n_cols, dpi=self.PLOT_DPI, figsize=(5/2 * n_cols, 1.5 * n_rows),
+                                 gridspec_kw={'wspace': 0.05, 'hspace': 0.05})
+
+            for ii, vv in enumerate(keys):
+                t = critical_values_table[vv].reset_index()
+                A = t.pivot(columns='age', index='cl', values='min_loc').astype(float)
+                B = t.pivot(columns='age', index='cl', values='max_loc').astype(float)
+                C = t.pivot(columns='age', index='cl', values='zero_loc').astype(float)
+
+                self._plot_countour(ax[ii, 0], A, 'Purples', min_levels)
+                self._plot_countour(ax[ii, 1], C, 'Greens', zero_levels)
+                self._plot_countour(ax[ii, 2], B, 'Oranges', max_levels)
+
+                if ii < (n_rows - 1):
+                    for jj in range(n_cols):
+                        ax[ii, jj].get_xaxis().set_visible(False)
+                        ax[ii, jj].spines['bottom'].set_visible(False)
+
+                for jj in range(1, n_cols):
+                    ax[ii, jj].get_yaxis().set_visible(False)
+                    ax[ii, jj].spines['left'].set_visible(False)
+
+                if vv == 'HRV':
+                    ax[ii, 0].set_ylabel(f" {self.plotting_physio_labels_short[vv]}* \n Cycle Length ")
+                else:
+                    ax[ii, 0].set_ylabel(f" {self.plotting_physio_labels_short[vv]} \n Cycle Length ")
+
+            l1 = self._add_bottom_legend(ax[-1, 0], 'Purples', min_levels, 2, y_delta=0.55)
+            l1.set_xlabel("Min Day")
+
+            l2 = self._add_bottom_legend(ax[-1, 1], 'Greens', zero_levels, 4, y_delta=0.55)
+            l2.set_xlabel("Return-to-Baseline Day")
+
+            l3 = self._add_bottom_legend(ax[-1, 2], 'Oranges', max_levels, 5, y_delta=0.55)
+            l3.set_xlabel("Max Day")
+
+        return f, ax
+
+    def _add_bottom_legend(self, ax, cmap, levels, step, y_delta=0.4):
+        p = ax.get_position()
+        f = ax.figure
+        l1 = f.add_axes([p.x0, p.y0-y_delta*p.height, p.width, 0.15*p.height])
+
+        l1.imshow(np.vstack((levels,levels)), aspect='auto', cmap=cmap)
+        setup_axes(l1, spine_list=['bottom'])
+        l1.set_xticks(np.arange(1,len(levels), step))
+        l1.set_xticklabels(levels[1::step].astype(int))
+        l1.yaxis.set_ticks([])                  # Remove y-axis ticks
+        l1.yaxis.set_ticklabels([])             # Remove y-axis labels
+        l1.grid(False)
+
+        return l1
+
+    def _plot_countour(self, ax, data, cmap, levels):
+        setup_axes(ax)
+        xx, yy = np.meshgrid(data.columns, data.index)
+        cs = ax.contourf(xx, yy, data, levels=levels, cmap=cmap)
+        # ax.clabel(cs, inline=True, fontsize=6, colors='k', rightside_up=True)
+        xticks = data.columns
+        xticks = xticks[xticks.isin(self.age_bin_centers)   ].astype(int).values
+        ax.set_xticks(xticks)
+        ax.set_xlabel("Age")
+        ax.set_ylabel("CL")
+
+        yticks = data.index
+        yticks = yticks[yticks.isin(self.CL_bins)].astype(int).values
+        ax.set_yticks(yticks)
+        ax.spines['left'].set_position(('outward', 5))   # Move the left spine
+
+    def _get_zero_crossing(self, x):
+        """
+        Find the indices of zero crossings in a 2D array.
+        """
+        # Check if the input is a 1D array:
+        if x.ndim == 1:
+            y = x
+        elif x.ndim == 2:
+            y = x[:,1]
+        else:
+            raise ValueError("Input must be a 1D or 2D array.")
+
+        zero_loc = np.where(np.diff(np.sign(y)))
+        if zero_loc[0].size == 0:
+            zero_loc = np.nan
+        else:
+            zero_loc = zero_loc[0][0]
+
+        return zero_loc
+
     def _add_user_level_biometrics(self, prefix=None):
         if prefix is None:
             prefix = ''
