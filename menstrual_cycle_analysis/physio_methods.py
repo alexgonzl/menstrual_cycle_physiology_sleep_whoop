@@ -1974,6 +1974,111 @@ class PhysioMethods(CycleBehavMethods):
 
         return fig, axes
 
+    def individual_biometrics_x_cl(self, prefix='pct'):
+        np.random.seed(42)
+        n_plot_cycles = 20
+        day_range = np.arange(-10, 35)
+        ind_line_colors = "#2f75d6"
+
+        y_lims = dict(RHR=[-12,12], HRV=[-30, 30], RR=[-6, 6], skin_temp=[-2.8,2.8], blood_oxygen=[-2.5,2.5])
+        y_tick_vals = {}
+        for k, vals in y_lims.items():
+            val = np.floor(vals[1]*0.9).astype(int)
+            y_tick_vals[k] = [-val, 0, val]
+
+        participant_counts = {}
+        with plt.rc_context(rc=self.plotting_params):
+            f, axs = plt.subplots(5, 3, figsize=(6, 5), dpi=500, constrained_layout=True)
+
+            participant_counts = {}
+            for jj, cl in enumerate([24, 28, 32]):
+
+                idx = (self.tables['cycle']['length']==cl) & (self.tables['cycle']['vcl'])
+                idx_list = idx[idx].index
+                idx_df = idx_list.to_frame().reset_index(drop=True)
+                idx_df_unique=idx_df.groupby('n_id').head(10).reset_index(drop=True)
+
+                biom_dict = {vv: pd.DataFrame(index=day_range, columns=range(n_plot_cycles)) for vv in self.CORE_BIOMETRICS}
+
+                idx2 = (self.reference_table['length']==cl) & (self.reference_table['vcl'])
+                participant_counts[jj] = len(self.reference_table.loc[idx2].groupby(["n_id"]).size())
+
+                pop_means = {vv: self.reference_table.loc[idx2].groupby(["n_id", "cycle_day"])[f'{prefix}_{vv}'].mean().groupby("cycle_day").mean() for vv in self.CORE_BIOMETRICS}
+
+                for kk, vv in enumerate(self.CORE_BIOMETRICS):
+                    ax = axs[kk, jj]
+                    setup_axes(ax)
+                    cnt = 0
+                    n_loops = 0
+                    users_in_plot = []
+                    while cnt <= n_plot_cycles:
+                        rand_cycle = np.random.randint(len(idx_df_unique), size=1)[0]
+                        user = idx_df_unique.loc[rand_cycle, 'n_id']
+                        cycle_num = idx_df_unique.loc[rand_cycle, 'j_cycle_num']
+
+                        idx = self.reference_table['n_id'] == user
+                        idx &= self.reference_table['j_cycle_num'] == cycle_num
+                        idx &= self.reference_table['cycle_day'].isin(day_range)
+                        day_vals = self.reference_table.loc[idx, 'cycle_day']
+                        biom_vals = self.reference_table.loc[idx, f'{prefix}_{vv}']
+
+                        if biom_vals.isna().sum()<=5:
+                            if user not in users_in_plot:
+                                ax.plot(day_vals, biom_vals, lw=0.6, alpha=0.5, color=ind_line_colors, zorder=1)
+                                biom_dict[vv].loc[day_vals, cnt] = biom_vals.values
+
+                                users_in_plot.append(user)
+                                cnt+=1
+                        n_loops+=1
+                        if n_loops>=n_plot_cycles*2:
+                            break
+
+                for kk, vv in enumerate(self.CORE_BIOMETRICS):
+                    ax = axs[kk, jj]
+                    biom_mean = biom_dict[vv].mean(axis=1)
+                    ax.plot(day_range, biom_mean, lw=2.5, color=ind_line_colors, zorder=3, alpha=1)
+
+                    ax.set_xticks(np.arange(-7,36,7))
+
+                    val_idx =pop_means[vv].index.isin(day_range)
+                    x_vals = pop_means[vv].index[val_idx]
+                    y_vals = pop_means[vv].loc[val_idx]
+
+                    ax.plot(x_vals, y_vals, lw=2.0, color='black', zorder=2, alpha=0.75)
+                    ax.set_ylim(*y_lims[vv])
+                    ax.set_yticks(y_tick_vals[vv])
+                    ax.set_xlim(-10,33)
+
+                axs[0,jj].set_title(f"Cycle Length = {cl}")
+                axs[4,jj].set_xlabel("Cycle Day")
+
+
+                for kk, vv in enumerate(self.CORE_BIOMETRICS):
+                    ax = axs[kk, jj]
+                    col = f'{prefix}_{vv}'
+                    if jj>0:
+                        ax.set_yticklabels([])
+                    if kk<4:
+                        ax.set_xticklabels([])
+                    ax.grid(False)
+                    ax.axvline(0, ls='--', lw=1, color='0.8', zorder=-1)
+
+            for kk, vv in enumerate(self.CORE_BIOMETRICS):
+                col = f'{prefix}_{vv}'
+                axs[kk, 0].set_ylabel(self.plotting_physio_labels_short_units[col])
+
+            leg_handles = [
+                plt.Line2D([0], [0], color=ind_line_colors, lw=0.6, alpha=0.5),
+                plt.Line2D([0], [0], color=ind_line_colors, linewidth=2),
+                plt.Line2D([0], [0], color='black', linewidth=2),
+            ]
+            leg_labels = ['Individual\n Cycles',
+                        'Sample\n Mean',
+                        'Population\n Mean']
+            add_legend(axs[-1,-1], labels=leg_labels, handles=leg_handles)
+
+        return f, axs
+
     def _add_user_level_biometrics(self, prefix=None):
         if prefix is None:
             prefix = ''
