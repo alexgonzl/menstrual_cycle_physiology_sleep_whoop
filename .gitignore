@@ -6,8 +6,8 @@ models/
 !data/.gitkeep
 !models/.gitkeep
 
-# CLAUDE.md references private sibling repo paths; not for the public release.
-CLAUDE.md
+# CLAUDE.local.md is the session-scoped working doc; only the short public CLAUDE.md is committed.
+CLAUDE.local.md
 
 # macOS junk
 .DS_Store
