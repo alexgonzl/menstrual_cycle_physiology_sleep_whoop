@@ -96,25 +96,29 @@ The package preserves the original analysis conventions:
 
 ## Running
 
-After activating the environment and placing the data files:
+### Regenerate the published figures
+
+```bash
+python make_figures.py                 # all 18 figures into figures/
+python make_figures.py fig3 figS9      # subset
+python make_figures.py --list          # show available figure names
+```
+
+`make_figures.py` is the single canonical entry point that writes to `figures/`. It loads the data, runs the preprocessing + GAM cache, and saves every figure plus the manuscript-quoted verification statistics. The notebooks below are for interactive exploration — they render figures inline but do not write to disk.
+
+### Notebooks
 
 ```bash
 jupyter lab notebooks/
 ```
 
-The first call to `load_paper_data()` parses the daily CSV (~25 s for 1.3M rows) and caches the parsed DataFrame as `data/cache/day_df.parquet`. The first call to `PhysioMethods.process_physio_data()` runs the per-participant biometric filter (~25 s) and caches the derived columns as `data/cache/physio_data__*.parquet`. Both caches are read on subsequent calls — including from the notebooks — so warm starts are seconds rather than minutes. Cache invalidation is manual: `rm -rf data/cache/` to force a fresh build (the right thing to do after editing the source CSV).
+Each notebook reproduces one figure family with the same package methods `make_figures.py` calls. The cache layer (next section) means a freshly opened notebook starts in seconds.
 
-Notebook 03's first run also fits five GAMs (~30–60 minutes total); fits are cached as `models/pct_*.rds` so subsequent runs take ~5 minutes.
+### Caching
 
-End-to-end execution of all five notebooks:
+The first call to `load_paper_data()` parses the daily CSV (~25 s for 1.3M rows) and caches the parsed DataFrame as `data/cache/day_df.parquet`. The first call to `PhysioMethods.process_physio_data()` runs the per-participant biometric filter (~25 s) and caches the derived columns as `data/cache/physio_data__*.parquet`. Both caches are read on subsequent calls — including from the notebooks and `make_figures.py` — so warm starts are seconds rather than minutes. Cache invalidation is manual: `rm -rf data/cache/` to force a fresh build (the right thing to do after editing the source CSV).
 
-```bash
-for nb in 01_cycle_length 02_sleep_cycle_length 03_biometrics_gam \
-         04_var_residuals 05_sleep_phase_natural_experiment; do
-    python -m nbconvert --to notebook --execute notebooks/$nb.ipynb \
-        --output /tmp/$nb.ipynb --ExecutePreprocessor.timeout=7200
-done
-```
+Notebook 03 / `make_figures.py`'s first run also fits five GAMs (~30–60 minutes total); fits are cached as `models/pct_*.rds` so subsequent runs take ~5 minutes.
 
 ## Citation
 
