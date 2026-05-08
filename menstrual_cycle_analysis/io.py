@@ -20,6 +20,8 @@ from .cl_behav_methods import CycleBehavMethods
 def load_paper_data(
     *,
     data_dir: Path | str | None = None,
+    daily_csv: Path | str | None = None,
+    summary_csv: Path | str | None = None,
 ) -> tuple[pd.DataFrame, CycleBehavMethods]:
     """Returns `(day_df, CBM)`.
 
@@ -32,22 +34,43 @@ def load_paper_data(
         CBM.add_sleep_behaviors('cycle')
         CBM.add_workout_behaviors('user')
         CBM.add_workout_behaviors('cycle')
+
+    Parameters
+    ----------
+    data_dir : optional
+        Directory containing the two CSVs. Defaults to `config.DATA_DIR`.
+        Within this directory the loader looks for the filenames at
+        `config.DAILY_CSV.name` and `config.SUMMARY_CSV.name`.
+    daily_csv, summary_csv : optional
+        Explicit paths to the daily and per-participant CSVs, overriding
+        `data_dir` + the configured filenames. Use these to load CSVs that
+        are named differently, or that live in different directories.
     """
-    data_dir = Path(data_dir) if data_dir is not None else config.DATA_DIR
-    day_df, summary_df = _load_csvs(data_dir)
+    daily_path, summary_path = _resolve_csv_paths(data_dir, daily_csv, summary_csv)
+    day_df, summary_df = _load_csvs(daily_path, summary_path)
     CBM = CycleBehavMethods(day_df, summary_df)
     return day_df, CBM
 
 
-def _load_csvs(data_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    daily_csv = data_dir / config.DAILY_CSV.name
-    summary_csv = data_dir / config.SUMMARY_CSV.name
+def _resolve_csv_paths(
+    data_dir: Path | str | None,
+    daily_csv: Path | str | None,
+    summary_csv: Path | str | None,
+) -> tuple[Path, Path]:
+    base = Path(data_dir) if data_dir is not None else config.DATA_DIR
+    daily = Path(daily_csv) if daily_csv is not None else base / config.DAILY_CSV.name
+    summary = Path(summary_csv) if summary_csv is not None else base / config.SUMMARY_CSV.name
+    return daily, summary
 
+
+def _load_csvs(daily_csv: Path, summary_csv: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     if not daily_csv.exists() or not summary_csv.exists():
         raise FileNotFoundError(
             f"Expected CSV files at {daily_csv} and {summary_csv}.\n"
             "These are private and gitignored. See README.md for data-access "
-            "instructions (per the WHOOP data agreement)."
+            "instructions (per the WHOOP data agreement). To point at CSVs with "
+            "different names or paths, pass daily_csv= and summary_csv= to "
+            "load_paper_data()."
         )
 
     day_df = pd.read_csv(daily_csv, index_col=0)
