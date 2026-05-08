@@ -1,21 +1,10 @@
-"""`CycleBehavMethods` — verbatim port of the source class with notebook 01
-scope kept (Fig 1 + S1-S4). Methods unused by notebook 01 (phase tables,
-bootstrapped onset comparisons, alternative population-averaged contrasts,
-the older `get_CL_summaries` code path) are intentionally not included; they
-will be ported when the notebooks that need them are added.
+"""`CycleBehavMethods` — daily, cycle, and per-user tables.
 
-Source: `whoop_analyses/whoop_analyses/cl_behav_methods.py` (CycleBehavMethods).
-
-Modifications from source:
-  - Constructor takes (data, summary_df, cycle_type='j') instead of pulling
-    `WHOOP_USER_TABLES`. The summary table is the public CSV `power_users_summary_table.csv`.
-  - `self.wt.HR_ZONES` / `self.wt.HR_WEIGHTS` are replaced with
-    `config.HR_ZONES` / `config.HR_WEIGHTS`.
-  - `self.wt.aggregate_table[kk]` (used to attach age, BMI) is replaced
-    with `self.summary_df[kk]`.
-  - `self.wt.activity_categories` block in `_add_workout_categories` is dropped
-    (activity counts aren't used by notebook 01).
-  - Method bodies are otherwise byte-identical to the source.
+Constructor reads the daily DataFrame and the per-participant summary,
+derives cycle indexing (j_cycle, j_cycle_num, j_cycle_day, j_CP, j_bounds),
+attaches age/BMI to the user table, and builds the cycle table with
+delta-CL threshold columns. `add_sleep_behaviors` and `add_workout_behaviors`
+extend the user/cycle tables with sleep and workout aggregates.
 """
 from __future__ import annotations
 

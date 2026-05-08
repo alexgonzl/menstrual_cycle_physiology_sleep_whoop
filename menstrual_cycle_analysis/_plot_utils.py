@@ -1,12 +1,7 @@
-"""Free-function plot helpers used by `CycleBehavMethods` and
-`CycleLengthAnalyses`. Ported verbatim from `whoop_analyses/utils.py`:
-
-  - `get_plotting_params`         (utils.py:907-925)
-  - `setup_axes`                  (utils.py:751-788)
-  - `fixed_yticks`                (utils.py:846-905)
-  - `single_var_point_plot`       (utils.py:427-534)
-  - `_get_counts_and_mean_BCI`    (utils.py:386-406)
-  - `_add_counts_to_point_plot`   (utils.py:409-424)
+"""Free-function plot helpers shared across the package: rcParams setup,
+spine + tick configuration, fixed y-tick formatting, single-variable
+point-plot with bootstrapped CIs, gradient rectangles, hex/colour
+helpers, and the legend builder.
 """
 from __future__ import annotations
 

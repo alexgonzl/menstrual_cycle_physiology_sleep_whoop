@@ -1,9 +1,8 @@
-"""`Biometrics_VAR` — port of the VAR(3) inter-biometric residual analysis
-used to produce S9.
+"""`Biometrics_VAR` — VAR(3) inter-biometric residual analysis for Fig S9.
 
-Source: `whoop_analyses/whoop_analyses/pca_analyses.py:306-409`.
-
-Method bodies are byte-identical to the source.
+Per-participant filtering (VAR preset) and normalization, then a
+VAR(3) fit on the concatenated cross-biometric series. Output:
+residual correlation matrix and forecast-error variance decomposition.
 """
 from __future__ import annotations
 

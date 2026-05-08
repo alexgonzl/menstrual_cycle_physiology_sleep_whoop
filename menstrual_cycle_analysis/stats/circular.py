@@ -1,7 +1,4 @@
-"""Circular statistics on hour-of-day variables (sleep/workout onset times).
-
-Ported verbatim from `whoop_analyses/whoop_analyses/utils.py:150-197`.
-"""
+"""Circular statistics on hour-of-day variables (sleep/workout onset times)."""
 from __future__ import annotations
 
 import numpy as np

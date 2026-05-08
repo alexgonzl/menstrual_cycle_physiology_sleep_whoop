@@ -1,15 +1,12 @@
-"""`CycleLengthAnalyses` — verbatim port of the source class with notebook 01
-scope kept (Fig 1 + S1-S4). Methods unused by notebook 01 are intentionally
-not included; they will be ported when the notebooks that need them are added.
+"""`CycleLengthAnalyses` — GEE models and figure builders for cycle-length
+analyses (Figures 1, 2 and supplementaries S1–S5).
 
-Source: `whoop_analyses/whoop_analyses/paper_code_wrapper.py` (CycleLengthAnalyses).
-
-Modifications from source:
-  - Constructor takes `CBM=None` only (no `data` fallback that constructs
-    `WHOOP_USER_TABLES`).
-  - `paper_figures_path` is set to `config.FIGURES_DIR` instead of pulled from
-    `WHOOP_USER_TABLES`.
-  - Method bodies are otherwise byte-identical to the source.
+Wraps a `CycleBehavMethods` instance and provides the GEE wrappers
+(`get_model`, `_fit_gee_model`) plus the per-figure plot methods
+(`cl_x_age_plots`, `cl_x_sleep_plots`, `cl_x_bmi_plots`,
+`cl_x_behav_plots`, `cl_sd_x_age_plot`, `cl_x_age_dist_plots`,
+`behav_x_age_bmi_plots`) and the manuscript-text statistic helpers
+(`cl_x_age_stats`, `cl_x_behav_stats`).
 """
 from __future__ import annotations
 

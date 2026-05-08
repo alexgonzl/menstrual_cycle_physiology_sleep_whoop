@@ -1,14 +1,10 @@
-"""`StatisticalPredictionHandler` — verbatim port of the slice used by
-notebooks 01–02 (`get_conditional_predictions`, `calculate_conditional_contrast`,
-`calculate_within_subject_contrast`, `calculate_min_term_ci` + their helpers).
+"""`StatisticalPredictionHandler` — model-prediction and contrast helpers
+for fitted statsmodels GEEs.
 
-Source: `whoop_analyses/whoop_analyses/statistical_prediction_methods.py`
-(StatisticalPredictionHandler).
-
-Methods unused by these notebooks (marginal predictions / contrasts, raw /
-subject-averaged contrasts, interaction contrasts, simple-interaction effects)
-are intentionally not included; they will be ported when later notebooks need
-them. Method bodies that are kept are byte-identical to the source.
+Provides conditional and within-subject contrast computation
+(`get_conditional_predictions`, `calculate_conditional_contrast`,
+`calculate_within_subject_contrast`, `calculate_min_term_ci`) for
+the cycle-length, sleep, and natural-experiment GEE models.
 """
 from __future__ import annotations
 

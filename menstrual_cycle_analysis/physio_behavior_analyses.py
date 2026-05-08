@@ -1,16 +1,14 @@
-"""`PhysioBehaviorAnalyses` — port of source class for notebook 05 (Fig 4 + S14).
+"""`PhysioBehaviorAnalyses` — Figure 4 and S14 (sleep × cycle phase
+natural experiment).
 
-Source: `whoop_analyses/whoop_analyses/paper_code_wrapper.py:1250-end`.
-
-Phase E-1 slice: __init__, plot_phase_behav_change, phase_behav_change_stats,
-_set_phase_figure_layout, save_fig.
-
-Phase E-2/E-3 methods (get_physio_behav_change_models,
-plot_model_physio_response_x_phase, plot_physio_behav_change_by_phase_continous,
-plot_model_physio_response_x_phase_all) will be added in subsequent phases.
-
-Modifications from source:
-  - paper_figures_path comes from config.FIGURES_DIR rather than `wt`.
+Construction has the side effect of extending `PM.data` and
+`PM.reference_table` with the workout, sleep, seasonality, acute/chronic
+behavior, and menstrual-phase columns needed by the phase-conditioned
+GEE models. Plot methods: `plot_phase_behav_change` (Fig 4a),
+`plot_physio_behav_change_by_phase_continous` (Fig 4b),
+`plot_model_physio_response_x_phase` (Fig 4c),
+`plot_model_physio_response_x_phase_all` (S14). Stats:
+`phase_behav_change_stats`, `get_physio_behav_change_models`.
 """
 from __future__ import annotations
 

@@ -1,20 +1,16 @@
-"""`PhysioMethods` — slice needed by notebook 04 (VAR S9).
+"""`PhysioMethods` — biometric signal processing, GAM fits, and the figure
+builders for Figure 3 and supplementaries S6–S8, S10–S13.
 
-Source: `whoop_analyses/whoop_analyses/physio_methods.py` (PhysioMethods).
+Augments a `CycleBehavMethods` instance with the biometric pipeline:
+filter design (`_define_filter`, IIR + FIR presets), per-participant
+filtering and percent-deviation normalization (`process_physio_data`,
+which produces `m_*`, `pct_*`, `b_*`, `z_*`, `rz_*` columns), the
+reference table and user-x-cycle bounds, and the GAM machinery
+(`fit_gam_models`, `gam_cycle_model_bam_full`, `predict_bam_chunked_ci`,
+`compute_gam_range_contrast_r`, contrast printers).
 
-This port covers what notebook 04 uses end-to-end:
-  - constructor that augments a CycleBehavMethods instance with biometric
-    setup (`CORE_BIOMETRICS`, `_filters`, `plotting_physio_labels_short`,
-    `PLOT_DPI`, `palettes`, etc.).
-  - `_define_filter` (Butterworth/FIR factory) + `filter_data`.
-  - `_init_plotting_labels`.
-  - `get_reference_table` + `_get_user_x_cycle_bounds` + `add_column_reference_table`.
-  - `process_physio_data` (interpolate + filter biometrics, add `m_*`,
-    `pct_*`, `b_*`, `z_*`, `rz_*` columns).
-  - `_zscore`.
-
-GAM machinery and Fig 3 plot helpers are intentionally not included; they
-will be ported when notebook 03 is implemented.
+`PhysioBehavChangeMethods` (defined below) extends with the natural-
+experiment per-phase behavioral analyses used by Figure 4 and S14.
 """
 from __future__ import annotations
 
@@ -2114,8 +2110,7 @@ class PhysioMethods(CycleBehavMethods):
 
 
 # ---------------------------------------------------------------------------
-# PhysioBehavChangeMethods (notebook 05 prerequisite)
-# Source: physio_methods.py:3120-end
+# PhysioBehavChangeMethods — natural-experiment per-phase behavioral analyses
 # ---------------------------------------------------------------------------
 class PhysioBehavChangeMethods(PhysioMethods):
     """Methods for analyzing physiological response to behavior changes by
@@ -2461,7 +2456,7 @@ class PhysioBehavChangeMethods(PhysioMethods):
             return fig, axes
 
     # =========================================================================
-    # Phase E-2: per-phase biometric × behavior-change plots
+    # Per-phase biometric × behavior-change plots (Fig 4b/c, S14)
     # =========================================================================
 
     def add_acr_labels_to_rt(self):
