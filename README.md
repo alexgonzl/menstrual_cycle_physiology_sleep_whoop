@@ -102,7 +102,9 @@ After activating the environment and placing the data files:
 jupyter lab notebooks/
 ```
 
-The first call to `load_paper_data()` parses the daily CSV (~30 s for 1.4M rows) and caches three parquet files under `data/cache/` for fast subsequent loads. Notebook 03's first run also fits five GAMs (~30–60 minutes total); fits are cached as `models/pct_*.rds` so subsequent runs take ~5 minutes.
+The first call to `load_paper_data()` parses the daily CSV (~25 s for 1.3M rows) and caches the parsed DataFrame as `data/cache/day_df.parquet`. The first call to `PhysioMethods.process_physio_data()` runs the per-participant biometric filter (~25 s) and caches the derived columns as `data/cache/physio_data__*.parquet`. Both caches are read on subsequent calls — including from the notebooks — so warm starts are seconds rather than minutes. Cache invalidation is manual: `rm -rf data/cache/` to force a fresh build (the right thing to do after editing the source CSV).
+
+Notebook 03's first run also fits five GAMs (~30–60 minutes total); fits are cached as `models/pct_*.rds` so subsequent runs take ~5 minutes.
 
 End-to-end execution of all five notebooks:
 

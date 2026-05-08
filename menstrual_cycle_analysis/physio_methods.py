@@ -44,6 +44,19 @@ from .stats.circular import circmean_day, circvar_day
 from .stats.contrasts import StatisticalPredictionHandler as SPH
 
 
+def _physio_cache_filename(preset, prefix, types) -> str:
+    """Cache filename for a given `process_physio_data` call signature.
+
+    Format: `physio_data__<preset>__<prefix>__<types>.parquet`. `<types>` is
+    the types tuple sorted then dash-joined, so the order on call sites
+    doesn't affect the filename.
+    """
+    preset_part = preset if preset is not None else 'none'
+    prefix_part = prefix if prefix is not None else 'none'
+    types_part = '-'.join(sorted(types))
+    return f"physio_data__{preset_part}__{prefix_part}__{types_part}.parquet"
+
+
 class PhysioMethods(CycleBehavMethods):
     """Minimal port; carries biometric setup and filter factories used by
     `Biometrics_VAR` for S9.
@@ -420,6 +433,23 @@ class PhysioMethods(CycleBehavMethods):
                 return f'{typ}_{prefix}_{biometric}'
             return f'{typ}_{biometric}'
 
+        all_cols = [_col(typ, biom)
+                    for biom in self.CORE_BIOMETRICS
+                    for typ in types]
+
+        # Cache: per-call-signature parquet under data/cache/. Read if
+        # present, else compute and write at the end. Manual invalidation
+        # via `rm -rf data/cache/`.
+        cache_path = config.CACHE_DIR / _physio_cache_filename(preset, prefix, types)
+        if cache_path.exists():
+            cached = pd.read_parquet(cache_path)
+            for col in all_cols:
+                self.data[col] = cached[col]
+                if self.reference_table is not None:
+                    self.add_column_reference_table(col)
+            self.filter_data = prev_filter
+            return
+
         t = self.data
         tg = t.groupby("n_id")
 
@@ -453,6 +483,10 @@ class PhysioMethods(CycleBehavMethods):
                 self.add_column_reference_table(_col(typ, biometric))
 
         self.filter_data = prev_filter
+
+        # Write cache for future calls.
+        config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        self.data[all_cols].to_parquet(cache_path)
 
     # GAM methods
     def gam_cycle_model_bam_full(self, gam_data, y_var, ar_lags=None,

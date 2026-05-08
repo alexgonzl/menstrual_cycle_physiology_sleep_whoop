@@ -73,6 +73,16 @@ def _load_csvs(daily_csv: Path, summary_csv: Path) -> tuple[pd.DataFrame, pd.Dat
             "load_paper_data()."
         )
 
-    day_df = pd.read_csv(daily_csv, index_col=0)
+    # Daily CSV is the slow one (~25s for 1.3M rows). Cache the parsed
+    # DataFrame as parquet on first parse; subsequent calls read parquet.
+    # No mtime/version checks — invalidation is manual: `rm -rf data/cache/`.
+    cache_path = config.CACHE_DIR / "day_df.parquet"
+    if cache_path.exists():
+        day_df = pd.read_parquet(cache_path)
+    else:
+        day_df = pd.read_csv(daily_csv, index_col=0)
+        config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        day_df.to_parquet(cache_path)
+
     summary_df = pd.read_csv(summary_csv, index_col=0)
     return day_df, summary_df
