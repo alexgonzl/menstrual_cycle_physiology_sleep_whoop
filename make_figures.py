@@ -15,7 +15,19 @@ build (do this after editing the source CSV).
 from __future__ import annotations
 
 import argparse
+import warnings
 from pathlib import Path
+
+warnings.filterwarnings("ignore")
+
+# Silence the verbose rpy2 R-callback noise from mgcv::predict.gam
+# ("Smoothness uncertainty corrected covariance not available", etc.).
+try:
+    from rpy2.rinterface_lib import callbacks
+    callbacks.consolewrite_warnerror = lambda *args, **kwargs: None
+    callbacks.consolewrite_print = lambda *args, **kwargs: None
+except Exception:
+    pass
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -207,7 +219,12 @@ def _build_fig2(ctx):
 
 def _build_fig3(ctx):
     """GAM biometrics × age × cycle length (physio_methods.plot_gam_biometrics_cl_age)."""
-    f, _ = ctx.PM.plot_gam_biometrics_cl_age(gam_data=ctx.gam_sim_data_28x32)
+    f, axes = ctx.PM.plot_gam_biometrics_cl_age(gam_data=ctx.gam_sim_data_28x32)
+    # Tighter blood_oxygen y-axis on the bottom row.
+    for jj in range(2):
+        axes[4, jj].set_ylim([-0.12, 0.12])
+        axes[4, jj].set_yticks([-0.1, 0, 0.1])
+        axes[4, jj].set_yticklabels([-0.1, 0, 0.1])
     _save(f, "fig3_gam_biometrics_cl_age")
     plt.close(f)
     print("--- fig3: GAM age contrasts ---")

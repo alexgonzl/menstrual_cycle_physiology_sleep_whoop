@@ -98,20 +98,28 @@ def save_gam_models(pm, directory: str, overwrite: bool = False) -> Dict[str, st
 def load_gam_models(pm, directory: str, keys=None) -> Dict[str, object]:
     """Load GAM models from a directory into pm.gam_models. Returns the dict of loaded models.
 
-    If keys is provided, only those filenames (without .rds) will be loaded.
+    If keys is provided, only those filenames (without .rds) will be loaded,
+    and the resulting dict is ordered to match `keys`. Otherwise the dict
+    follows alphabetical filename order (rather than `Path.glob` order, which
+    is filesystem-dependent).
     """
     ro, r, _, _ = _require_rpy2()
     d = Path(directory)
     if not d.exists():
         raise FileNotFoundError(f"Directory not found: {d}")
-    files = list(d.glob('*.rds'))
+
+    if keys is not None:
+        # Iterate in the caller's order so dict ordering is deterministic.
+        ordered_keys = list(keys)
+    else:
+        ordered_keys = sorted(f.stem for f in d.glob('*.rds'))
+
     loaded = {}
-    for f in files:
-        key = f.stem
-        if keys is not None and key not in keys:
+    for key in ordered_keys:
+        path = d / f"{key}.rds"
+        if not path.exists():
             continue
-        r_obj = r['readRDS'](str(f))
-        loaded[key] = r_obj
+        loaded[key] = r['readRDS'](str(path))
 
     if hasattr(pm, 'gam_models'):
         pm.gam_models.update(loaded)
