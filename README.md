@@ -2,6 +2,8 @@
 
 Companion code for *"The menstrual cycle through the lens of a wearable device: insights into physiology, sleep, and cycle variability"* (Gonzalez & O'Day et al., *npj Digital Medicine*, 2026; [nature.com/articles/s41746-026-02799-9](https://www.nature.com/articles/s41746-026-02799-9); preprint at [bioRxiv](https://www.biorxiv.org/content/10.1101/2025.09.11.675620v1)). Reproduces every main and supplementary figure plus the manuscript-quoted statistics, given the two CSVs described under [Data](#data).
 
+**Project website: [alexgonzl.github.io/menstrual_cycle_physiology_sleep_whoop](https://alexgonzl.github.io/menstrual_cycle_physiology_sleep_whoop/)**
+
 ## Layout
 
 - `menstrual_cycle_analysis/` — analysis package.
